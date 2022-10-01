@@ -114,7 +114,7 @@ func (s *TCPServer) Run() {
 			s.Logger.Error("读取协议头失败:", conn.RemoteAddr().Network(), err.Error())
 			continue
 		}
-		if utils.BytesToUint32(pm) != s.ProtocolMagicNumber {
+		if utils.BytesToInteger32[uint32](pm) != s.ProtocolMagicNumber {
 			s.Logger.Warn("无效的协议头:", conn.RemoteAddr().Network())
 			continue
 		}
@@ -179,6 +179,7 @@ func (ts *TCPSession) tcpReceive() {
 			}
 		default:
 		}
+		//TODO:对于阻塞函数，数据读到 ring，再由协程池处理。
 		if err = ts.conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
 			goto end
 		}
@@ -190,12 +191,12 @@ func (ts *TCPSession) tcpReceive() {
 		}
 		//处理数据
 		for iw >= (ir + 6) {
-			length := int(utils.BytesToUint32(buf[ir : ir+4]))
+			length := int(utils.BytesToInteger32[uint32](buf[ir : ir+4]))
 			tail := ir + length
 			if tail > iw {
 				break
 			}
-			flag := utils.BytesToUint16(buf[ir+4 : ir+6])
+			flag := utils.BytesToInteger16[uint16](buf[ir+4 : ir+6])
 			if flag == utils.StatusGoaway16 {
 				ir += 6
 				goto end
@@ -264,7 +265,7 @@ func TCPDial(ctx context.Context, url string, protocolMagicNumber uint32, h func
 		return nil, errors.New("写入协议头超时:" + err.Error())
 	}
 	pm := make([]byte, 4)
-	utils.CopyUint32(pm, protocolMagicNumber)
+	utils.CopyInteger32(pm, protocolMagicNumber)
 	if _, err := conn.Write(pm); err != nil {
 		close(c.stopChan)
 		return nil, errors.New("写入协议头失败:" + err.Error())

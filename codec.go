@@ -16,12 +16,12 @@ func init() {
 	framePing = make([]byte, 6)
 	framePong = make([]byte, 6)
 	frameGoaway = make([]byte, 6)
-	utils.CopyUint32(framePing[0:4], 6)
-	utils.CopyUint32(framePong[0:4], 6)
-	utils.CopyUint32(frameGoaway[0:4], 6)
-	utils.CopyUint16(framePing[4:6], utils.StatusPing16)
-	utils.CopyUint16(framePong[4:6], utils.StatusPong16)
-	utils.CopyUint16(frameGoaway[4:6], utils.StatusGoaway16)
+	utils.CopyInteger32(framePing[0:4], uint32(6))
+	utils.CopyInteger32(framePong[0:4], uint32(6))
+	utils.CopyInteger32(frameGoaway[0:4], uint32(6))
+	utils.CopyInteger16(framePing[4:6], utils.StatusPing16)
+	utils.CopyInteger16(framePong[4:6], utils.StatusPong16)
+	utils.CopyInteger16(frameGoaway[4:6], utils.StatusGoaway16)
 }
 
 /*
@@ -83,11 +83,11 @@ func (f Frame) MarshalBinary(marshal func(any) ([]byte, error), alloc func(int) 
 		lenght = int(ServiceMethodEnd) + len(buf)
 		d = alloc(lenght)
 	}
-	utils.CopyUint32(d[0:4], uint32(lenght))
-	utils.CopyUint16(d[4:6], f.Status)
-	utils.CopyInt64(d[6:14], f.Seq)
-	utils.CopyUint16(d[14:16], ServiceMethodEnd)
-	utils.CopyUint16(d[16:18], MetadataEnd)
+	utils.CopyInteger32(d[0:4], uint32(lenght))
+	utils.CopyInteger16(d[4:6], f.Status)
+	utils.CopyInteger64(d[6:14], f.Seq)
+	utils.CopyInteger16(d[14:16], ServiceMethodEnd)
+	utils.CopyInteger16(d[16:18], MetadataEnd)
 	copy(d[18:ServiceMethodEnd], utils.StringToBytes(f.ServiceMethod))
 	copy(d[MetadataEnd:], buf)
 	return d, nil
@@ -98,10 +98,10 @@ func (f *Frame) UnmarshalHeader(data []byte) (int, error) {
 	if len(data) < FrameMinLenght {
 		return 0, ErrInsufficientLength
 	}
-	f.Status = utils.BytesToUint16(data[4:6])
-	f.Seq = utils.BytesToInt64(data[6:14])
-	ServiceMethodEnd := utils.BytesToUint16(data[14:16])
-	MetadataEnd := utils.BytesToUint16(data[16:18])
+	f.Status = utils.BytesToInteger16[uint16](data[4:6])
+	f.Seq = utils.BytesToInteger64[int64](data[6:14])
+	ServiceMethodEnd := utils.BytesToInteger16[uint16](data[14:16])
+	MetadataEnd := utils.BytesToInteger16[uint16](data[16:18])
 	f.ServiceMethod = string(data[18:ServiceMethodEnd])
 	if ServiceMethodEnd != MetadataEnd {
 		var meta bytes.Buffer
@@ -123,7 +123,7 @@ func GetPayload(unmarshal func([]byte, any) error, data []byte) (obj any) {
 	if len(data) < FrameMinLenght {
 		return nil
 	}
-	l := utils.BytesToUint16(data[16:18])
+	l := utils.BytesToInteger16[uint16](data[16:18])
 	unmarshal(data[l:], &obj)
 	return obj
 }
@@ -133,7 +133,7 @@ func GetStatus(data []byte) uint16 {
 	if len(data) < FrameMinLenght {
 		return utils.StatusUnknown16
 	}
-	return utils.BytesToUint16(data[4:6])
+	return utils.BytesToInteger16[uint16](data[4:6])
 }
 
 // https://www.jianshu.com/p/e57ca4fec26f  HTTP2 详解

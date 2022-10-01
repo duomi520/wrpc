@@ -82,7 +82,7 @@ func TestTCPEcho(t *testing.T) {
 	s := NewTCPServer(ctx, ":4568", hs, logger)
 	go s.Run()
 	hc := func(send func([]byte) error, msg []byte) error {
-		n := int(utils.BytesToUint32(msg[6:10]))
+		n := int(utils.BytesToInteger32[uint32](msg[6:10]))
 		num++
 		count += n
 		if num == loop {
@@ -96,9 +96,9 @@ func TestTCPEcho(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := make([]byte, 10)
-	utils.CopyUint32(data[0:4], 10)
+	utils.CopyInteger32(data[0:4], uint32(10))
 	for i := 0; i < loop; i++ {
-		utils.CopyUint32(data[6:10], uint32(i))
+		utils.CopyInteger32(data[6:10], uint32(i))
 		c.Send(data)
 	}
 	<-stop

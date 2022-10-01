@@ -2,9 +2,10 @@ package wrpc
 
 import (
 	"encoding/json"
-	"github.com/duomi520/utils"
 	"strings"
 	"testing"
+
+	"github.com/duomi520/utils"
 )
 
 func TestFrame(t *testing.T) {

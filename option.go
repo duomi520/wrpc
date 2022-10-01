@@ -14,8 +14,6 @@ type Options struct {
 	Marshal             func(any) ([]byte, error)
 	Unmarshal           func([]byte, any) error
 	ProtocolMagicNumber uint32
-	//验证
-	Validator utils.IValidator
 	//熔断器
 	Breaker IBreaker
 	//平衡器
@@ -45,13 +43,6 @@ func NewOptions(opts ...Option) *Options {
 func WithProtocolMagicNumber(pm uint32) Option {
 	return func(o *Options) {
 		o.ProtocolMagicNumber = pm
-	}
-}
-
-//WithValidator 验证
-func WithValidator(v utils.IValidator) Option {
-	return func(o *Options) {
-		o.Validator = v
 	}
 }
 
@@ -98,3 +89,5 @@ func WithBreaker(b IBreaker) Option {
 		o.Breaker = b
 	}
 }
+
+// https://mp.weixin.qq.com/s/EvkMQCPwg-B0fZonpwXodg
