@@ -150,13 +150,13 @@ func TestRPC(t *testing.T) {
 }
 
 /*
-[Debug] 2022-01-27 13:45:52 TCP监听端口:4567
-[Debug] 2022-01-27 13:45:52 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-07 15:30:36 TCP监听端口:4567
+[Debug] 2022-10-07 15:30:36 TCP已初始化连接，等待客户端连接……
 56 {0 7} divide by zero
-[Debug] 2022-01-27 13:45:52 TCP监听端口关闭。
-[Debug] 2022-01-27 13:45:52 TCP等待子协程关闭……
-[Debug] 2022-01-27 13:45:56 127.0.0.1:50847 tcpReceive stop
-[Debug] 2022-01-27 13:45:56 TCPServer关闭。
-[Debug] 2022-01-27 13:45:56 127.0.0.1:4567 tcpSend stop
-[Debug] 2022-01-27 13:45:56 127.0.0.1:4567 tcpReceive stop
+[Debug] 2022-10-07 15:30:36 TCP监听端口关闭。
+[Debug] 2022-10-07 15:30:36 TCP等待子协程关闭……
+[Debug] 2022-10-07 15:30:41 127.0.0.1:59558 tcpServerReceive stop
+[Debug] 2022-10-07 15:30:41 127.0.0.1:4567 tcpClientReceive stop
+[Debug] 2022-10-07 15:30:41 TCPServer关闭。
+[Debug] 2022-10-07 15:30:41 127.0.0.1:4567 tcpSend stop
 */

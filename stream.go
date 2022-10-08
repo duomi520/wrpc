@@ -33,6 +33,7 @@ func (s *Stream) Send(data any) error {
 	return err
 }
 
+//Recv 非顺序接受数据
 func (s *Stream) Recv() (any, error) {
 	data := <-s.payload
 	var v any
@@ -42,7 +43,7 @@ func (s *Stream) Recv() (any, error) {
 
 //Free 释放
 
-func (s *Stream) free() {
+func (s *Stream) release() {
 	s.closeOnce.Do(func() {
 		close(s.payload)
 	})

@@ -48,8 +48,9 @@ type Frame struct {
 	Status        uint16
 	Seq           int64
 	ServiceMethod string
-	Metadata      map[any]any
-	Payload       any
+	//TODO Metadata 取消map，用string替代
+	Metadata map[any]any
+	Payload  any
 }
 
 func makeBytes(size int) []byte {

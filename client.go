@@ -13,6 +13,7 @@ type Client struct {
 	Options
 	callMap sync.Map
 	connect
+	release func()
 }
 
 //NewTCPClient 新
@@ -30,7 +31,13 @@ func NewTCPClient(ctx context.Context, url string, o *Options) (*Client, error) 
 		return nil, err
 	}
 	c.send = t.Send
+	c.release = t.release
 	return c, nil
+}
+
+//Close 关闭
+func (c *Client) Close() {
+	c.release()
 }
 
 func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, serviceMethod string, args any) error {
@@ -151,7 +158,7 @@ func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, 
 }
 
 func (c *Client) CloseStream(s *Stream) {
-	s.free()
+	s.release()
 	//TODO 通知服务器stream关闭
 	c.callMap.Delete(s.id)
 }

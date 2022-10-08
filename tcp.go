@@ -4,17 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/duomi520/utils"
 	"io"
 	"net"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/duomi520/utils"
 )
 
 //TCPBufferSize 缓存大小
-const TCPBufferSize = 4096
+var TCPBufferSize = 4 * 1024
 
 //defaultProtocolMagicNumber 缺省协议头
 const defaultProtocolMagicNumber uint32 = 2299
@@ -38,7 +39,7 @@ func NewTCPServer(ctx context.Context, port string, h func(func([]byte) error, [
 	}
 	tcpAddress, err := net.ResolveTCPAddr("tcp4", port)
 	if err != nil {
-		logger.Fatal("ResolveTCPAddr失败:", err.Error())
+		logger.Fatal("ResolveTCPAddr失败: ", err.Error())
 		return nil
 	}
 	listener, err := net.ListenTCP("tcp", tcpAddress)
@@ -65,7 +66,7 @@ func (s *TCPServer) Run() {
 		<-s.Ctx.Done()
 		closeOnce.Do(func() {
 			if err := s.tcpListener.Close(); err != nil {
-				s.Logger.Error("TCP监听端口关闭失败:", err.Error())
+				s.Logger.Error("TCP监听端口关闭失败: ", err.Error())
 			} else {
 				s.Logger.Debug("TCP监听端口关闭。")
 			}
@@ -80,7 +81,7 @@ func (s *TCPServer) Run() {
 		conn, err := s.tcpListener.AcceptTCP()
 		if err != nil {
 			if nErr, ok := err.(net.Error); ok && nErr.Timeout() {
-				s.Logger.Warn("Temporary error when accepting new connections:", err.Error())
+				s.Logger.Warn("Temporary error when accepting new connections: ", err.Error())
 				if tempDelay == 0 {
 					tempDelay = 5 * time.Millisecond
 				} else {
@@ -95,27 +96,27 @@ func (s *TCPServer) Run() {
 				continue
 			}
 			if !strings.Contains(err.Error(), "use of closed network connection") {
-				s.Logger.Warn("Permanent error when accepting new connections:", err.Error())
+				s.Logger.Warn("Permanent error when accepting new connections: ", err.Error())
 			}
 			break
 		}
 		//如果没有网络错误，下次网络错误的重试时间重新开始
 		tempDelay = 0
 		if err = conn.SetNoDelay(false); err != nil {
-			s.Logger.Error("TCP设定操作系统是否应该延迟数据包传递失败:" + err.Error())
+			s.Logger.Error("TCP设定操作系统是否应该延迟数据包传递失败: " + err.Error())
 		}
 		//协议头
 		pm := make([]byte, 4)
 		if err := conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
-			s.Logger.Error("读取协议头超时:", conn.RemoteAddr().Network(), err.Error())
+			s.Logger.Error("读取协议头超时: ", conn.RemoteAddr().Network(), err.Error())
 			continue
 		}
 		if _, err := conn.Read(pm); err != nil {
-			s.Logger.Error("读取协议头失败:", conn.RemoteAddr().Network(), err.Error())
+			s.Logger.Error("读取协议头失败: ", conn.RemoteAddr().Network(), err.Error())
 			continue
 		}
 		if utils.BytesToInteger32[uint32](pm) != s.ProtocolMagicNumber {
-			s.Logger.Warn("无效的协议头:", conn.RemoteAddr().Network())
+			s.Logger.Warn("无效的协议头: ", conn.RemoteAddr().Network())
 			continue
 		}
 		//设置TCP保持长连接
@@ -124,15 +125,14 @@ func (s *TCPServer) Run() {
 		conn.SetKeepAlivePeriod(3 * time.Minute)
 		conn.SetLinger(10)
 		session := &TCPSession{
-			Ctx:        s.Ctx,
-			conn:       conn,
-			Handler:    s.Handler,
-			serverNode: true,
-			Logger:     s.Logger,
+			Ctx:     s.Ctx,
+			conn:    conn,
+			Handler: s.Handler,
+			Logger:  s.Logger,
 		}
 		tcpGroup.Add(1)
 		go func() {
-			session.tcpReceive()
+			session.tcpServerReceive()
 			tcpGroup.Done()
 		}()
 	}
@@ -143,27 +143,26 @@ func (s *TCPServer) Run() {
 
 //TCPSession 会话
 type TCPSession struct {
-	Ctx        context.Context
-	conn       *net.TCPConn
-	Handler    func(func([]byte) error, []byte) error
-	serverNode bool
-	stopChan   chan struct{}
-	Logger     utils.ILogger
+	Ctx       context.Context
+	conn      *net.TCPConn
+	Handler   func(func([]byte) error, []byte) error
+	stopSign  bool
+	stopChan  chan struct{}
+	closeOnce sync.Once
+	Logger    utils.ILogger
 }
 
-func (ts *TCPSession) tcpReceive() {
+func (ts *TCPSession) release() {
+	ts.closeOnce.Do(func() {
+		ts.stopSign = true
+		close(ts.stopChan)
+	})
+}
+
+func (ts *TCPSession) tcpClientReceive() {
 	defer func() {
-		if ts.serverNode {
-			if err := ts.conn.Close(); err != nil {
-				ts.Logger.Error(err.Error())
-			}
-		} else {
-			close(ts.stopChan)
-		}
-		if r := recover(); r != nil {
-			ts.Logger.Error(fmt.Sprintf("tcpReceive：%v \n%s", r, string(debug.Stack())))
-		}
-		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpReceive stop")
+		ts.release()
+		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive stop")
 	}()
 	//IO读缓存
 	buf := make([]byte, TCPBufferSize)
@@ -171,15 +170,9 @@ func (ts *TCPSession) tcpReceive() {
 	var iw, ir int
 	var err error
 	for {
-		//TODO 优化
-		select {
-		case <-ts.Ctx.Done():
-			if ts.serverNode {
-				goto end
-			}
-		default:
+		if ts.stopSign {
+			goto end
 		}
-		//TODO:对于阻塞函数，数据读到 ring，再由协程池处理。
 		if err = ts.conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
 			goto end
 		}
@@ -198,25 +191,16 @@ func (ts *TCPSession) tcpReceive() {
 			}
 			flag := utils.BytesToInteger16[uint16](buf[ir+4 : ir+6])
 			if flag == utils.StatusGoaway16 {
-				ir += 6
 				goto end
-			}
-			if flag == utils.StatusPing16 {
-				ir += 6
-				err = ts.Send(framePong)
-				if err != nil {
-					goto end
-				}
-				continue
 			}
 			if flag == utils.StatusPong16 {
 				ir += 6
-				continue
+			} else {
+				if err := ts.Handler(ts.Send, buf[ir:tail]); err != nil {
+					ts.Logger.Error("tcpClientReceive：" + err.Error())
+				}
+				ir = tail
 			}
-			if err := ts.Handler(ts.Send, buf[ir:tail]); err != nil {
-				ts.Logger.Error("tcpReceive：" + err.Error())
-			}
-			ir = tail
 		}
 		if ir < iw {
 			copy(buf[0:], buf[ir:iw])
@@ -229,46 +213,140 @@ func (ts *TCPSession) tcpReceive() {
 end:
 	if err != nil && err != io.EOF {
 		if !strings.Contains(err.Error(), "wsarecv: An existing connection was forcibly closed by the remote host.") && !strings.Contains(err.Error(), "use of closed network connection") {
-			ts.Logger.Error(ts.conn.RemoteAddr().String(), " tcpReceive：", err.Error())
+			ts.Logger.Error(ts.conn.RemoteAddr().String(), " tcpClientReceive：", err.Error())
 		} else {
-			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpReceive：", err.Error())
+			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive：", err.Error())
 		}
 	}
+}
+
+func (ts *TCPSession) tcpServerReceive() {
+	defer func() {
+		if err := ts.conn.Close(); err != nil {
+			ts.Logger.Error(err.Error())
+		}
+		if r := recover(); r != nil {
+			ts.Logger.Error(fmt.Sprintf("tcpServerReceive %v \n%s", r, string(debug.Stack())))
+		}
+		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive stop")
+	}()
+	//未处理的数据
+	var unhandled []byte
+	var err error
+	for {
+		// TODO 优化
+		select {
+		case <-ts.Ctx.Done():
+			goto end
+		default:
+		}
+		sl := getSlot()
+		if len(unhandled) > 0 {
+			copy(sl.buf[0:], unhandled)
+		}
+		//TODO 动态调整响应时间，提供批量处理速度，减少切换
+		if err = ts.conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
+			sl.release()
+			goto end
+		}
+		n, err := ts.conn.Read(sl.buf[len(unhandled):])
+		if err != nil {
+			sl.release()
+			goto end
+		}
+		size := n + len(unhandled)
+		sl.setSize(uint64(size))
+		unhandled = unhandled[0:0]
+		cursor := 0
+		//处理数据
+		for size >= (cursor + 6) {
+			length := int(utils.BytesToInteger32[uint32](sl.buf[cursor : cursor+4]))
+			tail := cursor + length
+			if tail > size {
+				break
+			}
+			flag := utils.BytesToInteger16[uint16](sl.buf[cursor+4 : cursor+6])
+			if flag == utils.StatusGoaway16 {
+				sl.release()
+				goto end
+			}
+			if flag == utils.StatusPing16 {
+				cursor += 6
+				err = ts.Send(framePong)
+				if err != nil {
+					sl.release()
+					goto end
+				}
+				sl.used(6)
+			} else {
+				var tasker task
+				tasker.l, tasker.r, tasker.s, tasker.session = cursor, tail, sl, ts
+				wgo(tasker.do)
+				cursor = tail
+			}
+		}
+		if cursor < size {
+			unhandled = append(unhandled, sl.buf[cursor:size]...)
+			sl.used(uint64(size - cursor))
+		}
+	}
+end:
+	if err != nil && err != io.EOF {
+		if !strings.Contains(err.Error(), "wsarecv: An existing connection was forcibly closed by the remote host.") && !strings.Contains(err.Error(), "use of closed network connection") {
+			ts.Logger.Error(ts.conn.RemoteAddr().String(), " tcpServerReceive: ", err.Error())
+		} else {
+			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive: ", err.Error())
+		}
+	}
+}
+
+type task struct {
+	l       int
+	r       int
+	s       *slot
+	session *TCPSession
+}
+
+func (t task) do() {
+	if err := t.session.Handler(t.session.Send, t.s.buf[t.l:t.r]); err != nil {
+		t.session.Logger.Error("task.do: " + err.Error())
+	}
+	t.s.used(uint64(t.r - t.l))
 }
 
 //TCPDial 连接
 func TCPDial(ctx context.Context, url string, protocolMagicNumber uint32, h func(func([]byte) error, []byte) error, logger utils.ILogger) (*TCPSession, error) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", url)
 	if err != nil {
-		return nil, errors.New("TCPDial tcpAddr fail:" + err.Error())
+		return nil, errors.New("TCPDial tcpAddr fail: " + err.Error())
 	}
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		return nil, errors.New("TCPDial 连接服务端失败:" + err.Error())
+		return nil, errors.New("TCPDial 连接服务端失败: " + err.Error())
 	}
 	if conn.SetNoDelay(false) != nil {
-		return nil, errors.New("TCPDial 设定操作系统是否应该延迟数据包传递失败:" + err.Error())
+		return nil, errors.New("TCPDial 设定操作系统是否应该延迟数据包传递失败: " + err.Error())
 	}
 	c := &TCPSession{
-		Ctx:        ctx,
-		conn:       conn,
-		Handler:    h,
-		serverNode: false,
-		stopChan:   make(chan struct{}),
-		Logger:     logger,
+		Ctx:      ctx,
+		conn:     conn,
+		Handler:  h,
+		stopSign: false,
+		stopChan: make(chan struct{}),
+		Logger:   logger,
 	}
-	go c.tcpReceive()
+	go c.tcpClientReceive()
 	go c.tcpSend()
 	//发送协议头
 	if err := conn.SetWriteDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
-		close(c.stopChan)
-		return nil, errors.New("写入协议头超时:" + err.Error())
+		c.release()
+		return nil, errors.New("写入协议头超时: " + err.Error())
 	}
 	pm := make([]byte, 4)
 	utils.CopyInteger32(pm, protocolMagicNumber)
 	if _, err := conn.Write(pm); err != nil {
-		close(c.stopChan)
-		return nil, errors.New("写入协议头失败:" + err.Error())
+		c.release()
+		return nil, errors.New("写入协议头失败: " + err.Error())
 	}
 	return c, nil
 }
@@ -276,10 +354,11 @@ func TCPDial(ctx context.Context, url string, protocolMagicNumber uint32, h func
 func (ts *TCPSession) tcpSend() {
 	ticker := time.NewTicker(DefaultHeartbeatPeriodDuration)
 	defer func() {
-		ticker.Stop()
-		if r := recover(); r != nil {
-			ts.Logger.Error(fmt.Sprintf("tcpSendC：%v %s", r, string(debug.Stack())))
+		if err := ts.Send(frameGoaway); err != nil {
+			ts.Logger.Error(err.Error())
 		}
+		ts.release()
+		ticker.Stop()
 		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpSend stop")
 	}()
 	for {
@@ -290,9 +369,6 @@ func (ts *TCPSession) tcpSend() {
 				return
 			}
 		case <-ts.Ctx.Done():
-			if err := ts.Send(frameGoaway); err != nil {
-				ts.Logger.Error(err.Error())
-			}
 			return
 		case <-ts.stopChan:
 			return

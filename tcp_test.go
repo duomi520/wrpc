@@ -2,10 +2,11 @@ package wrpc
 
 import (
 	"context"
-	"github.com/duomi520/utils"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/duomi520/utils"
 )
 
 func TestTCPDial(t *testing.T) {
@@ -25,11 +26,11 @@ func TestTCPDial(t *testing.T) {
 }
 
 /*
-[Debug] 2022-01-09 22:24:42 TCP监听端口:4567
-[Debug] 2022-01-09 22:24:42 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-01-09 22:24:43 127.0.0.1:4567 tcpSend stop
-[Debug] 2022-01-09 22:24:43 127.0.0.1:54612 tcpReceive stop
-[Debug] 2022-01-09 22:24:43 127.0.0.1:4567 tcpReceive stop
+[Debug] 2022-10-07 15:32:08 TCP监听端口:4567
+[Debug] 2022-10-07 15:32:08 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-07 15:32:08 127.0.0.1:4567 tcpSend stop
+[Debug] 2022-10-07 15:32:08 127.0.0.1:4567 tcpClientReceive stop
+[Debug] 2022-10-07 15:32:08 127.0.0.1:59576 tcpServerReceive stop
 */
 
 func TestTCPGracefulStop(t *testing.T) {
@@ -53,17 +54,17 @@ func TestTCPGracefulStop(t *testing.T) {
 }
 
 /*
-[Debug] 2022-01-09 23:30:18 TCP监听端口:4568
-[Debug] 2022-01-09 23:30:18 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-01-09 23:30:18 TCP等待子协程关闭……
-[Debug] 2022-01-09 23:30:18 TCP监听端口关闭。
-[Debug] 2022-01-09 23:30:22 127.0.0.1:51260 tcpReceive stop
-[Debug] 2022-01-09 23:30:22 127.0.0.1:51259 tcpReceive stop
-[Debug] 2022-01-09 23:30:22 127.0.0.1:4568 tcpSend stop
-[Debug] 2022-01-09 23:30:22 127.0.0.1:4568 tcpReceive stop
-[Debug] 2022-01-09 23:30:22 TCPServer关闭。
-[Debug] 2022-01-09 23:30:22 127.0.0.1:4568 tcpReceive stop
-[Debug] 2022-01-09 23:30:22 127.0.0.1:4568 tcpSend stop
+[Debug] 2022-10-07 15:32:29 TCP监听端口:4568
+[Debug] 2022-10-07 15:32:29 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-07 15:32:29 TCP监听端口关闭。
+[Debug] 2022-10-07 15:32:29 TCP等待子协程关闭……
+[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpClientReceive stop
+[Debug] 2022-10-07 15:32:33 127.0.0.1:59582 tcpServerReceive stop
+[Debug] 2022-10-07 15:32:33 127.0.0.1:59583 tcpServerReceive stop
+[Debug] 2022-10-07 15:32:33 TCPServer关闭。
+[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpSend stop
+[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpClientReceive stop
+[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpSend stop
 */
 func TestTCPEcho(t *testing.T) {
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
@@ -113,13 +114,13 @@ func TestTCPEcho(t *testing.T) {
 }
 
 /*
-[Debug] 2022-01-10 21:31:25 TCP监听端口:4568
-[Debug] 2022-01-10 21:31:25 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-01-10 21:31:26 127.0.0.1:4568 tcpSend stop
-[Debug] 2022-01-10 21:31:26 TCP监听端口关闭。
-[Debug] 2022-01-10 21:31:26 127.0.0.1:4568 tcpReceive stop
-[Debug] 2022-01-10 21:31:26 127.0.0.1:53167 tcpReceive stop
-[Debug] 2022-01-10 21:31:26 TCP等待子协程关闭……
-[Debug] 2022-01-10 21:31:26 TCPServer关闭。
-[Debug] 2022-01-10 21:31:27 1249975000 = 1249975000
+[Debug] 2022-10-07 15:33:25 TCP监听端口:4568
+[Debug] 2022-10-07 15:33:25 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-07 15:33:26 127.0.0.1:4568 tcpSend stop
+[Debug] 2022-10-07 15:33:26 TCP等待子协程关闭……
+[Debug] 2022-10-07 15:33:26 127.0.0.1:4568 tcpClientReceive stop
+[Debug] 2022-10-07 15:33:26 127.0.0.1:59594 tcpServerReceive stop
+[Debug] 2022-10-07 15:33:26 TCPServer关闭。
+[Debug] 2022-10-07 15:33:26 TCP监听端口关闭。
+[Debug] 2022-10-07 15:33:27 1249975000 = 1249975000
 */

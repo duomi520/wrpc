@@ -19,6 +19,7 @@ type Options struct {
 	//平衡器
 	Balancer func([]int) int
 	//Registry  IRegistry
+	//日志
 	Logger utils.ILogger
 }
 

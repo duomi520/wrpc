@@ -2,10 +2,12 @@ package wrpc
 
 import (
 	"context"
-	"github.com/duomi520/utils"
 	"io"
 	"log"
 	"testing"
+	"time"
+
+	"github.com/duomi520/utils"
 )
 
 func (hi *hi) Order(ctx context.Context, s *Stream) error {
@@ -52,6 +54,8 @@ func TestClientStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	//TODO 发送顺序的bug
+	time.Sleep(time.Second)
 	n := 6
 	// send
 	for i := 0; i < n; i++ {
@@ -71,17 +75,17 @@ func TestClientStream(t *testing.T) {
 }
 
 /*
-2022/01/29 10:53:32 utf-8 webkit X-UA-Compatible
-2022/01/29 10:53:32 s 10 0
-2022/01/29 10:53:32 s 11 1
-2022/01/29 10:53:32 c 0 10
-2022/01/29 10:53:32 c 1 11
-2022/01/29 10:53:32 s 12 2
-2022/01/29 10:53:32 c 2 12
-2022/01/29 10:53:32 s 13 3
-2022/01/29 10:53:32 c 3 13
-2022/01/29 10:53:32 s 14 4
-2022/01/29 10:53:32 c 4 14
-2022/01/29 10:53:32 s 15 5
-2022/01/29 10:53:32 c 5 15
+2022/10/07 22:33:46 utf-8 webkit X-UA-Compatible
+2022/10/07 22:33:47 s 10 0
+2022/10/07 22:33:47 c 0 10
+2022/10/07 22:33:47 s 11 2
+2022/10/07 22:33:47 c 1 11
+2022/10/07 22:33:47 s 12 1
+2022/10/07 22:33:47 c 2 12
+2022/10/07 22:33:47 c 3 13
+2022/10/07 22:33:47 s 13 4
+2022/10/07 22:33:47 s 14 5
+2022/10/07 22:33:47 c 4 14
+2022/10/07 22:33:47 s 15 3
+2022/10/07 22:33:47 c 5 15
 */

@@ -184,7 +184,7 @@ func (sh *Service) functionStream(id int64, key string, meta map[any]any, payloa
 			if err := returnValues[0].Interface(); err != nil {
 				sh.Logger.Error("functionStream: ", err.(error).Error())
 			}
-			m.stream.free()
+			m.stream.release()
 			delete(sh.methodMap, key)
 		}()
 		return nil

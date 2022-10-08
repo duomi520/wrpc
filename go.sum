@@ -1,4 +1,4 @@
-github.com/duomi520/utils v0.0.0-20220531135448-a1f90aabd7c9 h1:8tSBaMYeJOm4jAZ4YNSfq0G++WvHgnZYESWLpwtW3RA=
-github.com/duomi520/utils v0.0.0-20220531135448-a1f90aabd7c9/go.mod h1:IV7aimb08+b8HVPLfGBlUOUbOFPJJZXX+/Zvepq4vrs=
-github.com/duomi520/utils v0.0.0-20221001023914-3dad0396def8 h1:BI+v0LhJfeQgT/N+1ijAd3sGlUIN8EwqICH27hQelr8=
-github.com/duomi520/utils v0.0.0-20221001023914-3dad0396def8/go.mod h1:IV7aimb08+b8HVPLfGBlUOUbOFPJJZXX+/Zvepq4vrs=
+github.com/duomi520/utils v0.0.0-20221006061557-788d1fefd18c h1:MrlkkaRtN0YF5UjQ27Ay+K4NiIt05uHKbbIPl+kuHKs=
+github.com/duomi520/utils v0.0.0-20221006061557-788d1fefd18c/go.mod h1:IV7aimb08+b8HVPLfGBlUOUbOFPJJZXX+/Zvepq4vrs=
+github.com/panjf2000/ants/v2 v2.5.0 h1:1rWGWSnxCsQBga+nQbA4/iY6VMeNoOIAM0ZWh9u3q2Q=
+github.com/panjf2000/ants/v2 v2.5.0/go.mod h1:cU93usDlihJZ5CfRGNDYsiBYvoilLvBF5Qp/BT2GNRE=
