@@ -1,7 +1,6 @@
 package wrpc
 
 import (
-	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -9,24 +8,29 @@ import (
 )
 
 func TestBroadcast(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	count := 0
 	var wg sync.WaitGroup
 	wg.Add(2)
 	o := NewOptions()
 	s := NewService(o)
-	err := s.TCPServer(context.TODO(), ":4567")
+	err := s.TCPServer(":4567")
+	defer s.Stop()
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 	topic := s.RegisterTopic("room")
-	c1, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	c1, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	c2, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	defer c1.Close()
+	c2, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	defer c2.Close()
 	f := func(data []byte) error {
 		count++
 		if !strings.EqualFold(string(data), "Good!") {

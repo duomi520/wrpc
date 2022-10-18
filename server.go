@@ -46,18 +46,23 @@ func NewService(o *Options) *Service {
 }
 
 //TCPServer tcp服务
-func (sh *Service) TCPServer(ctx context.Context, port string) error {
+func (sh *Service) TCPServer(port string) error {
 	if len(port) < 1 {
 		return errors.New("TCPServer: 端口号为空")
 
 	}
-	sh.tcpServer = NewTCPServer(ctx, port, sh.serveRequest, sh.Logger)
+	sh.tcpServer = NewTCPServer(port, sh.serveRequest, sh.Logger)
 	if sh.tcpServer == nil {
 		return errors.New("TCPServer: 启动TCP服务失败")
 	}
 	sh.ProtocolMagicNumber = sh.Options.ProtocolMagicNumber
 	go sh.tcpServer.Run()
 	return nil
+}
+
+//Stop
+func (sh *Service) Stop() {
+	sh.tcpServer.Stop()
 }
 
 //RegisterTopic 注册主题
@@ -134,7 +139,7 @@ func isExportedOrBuiltinType(t reflect.Type) bool {
 	return token.IsExported(t.Name()) || t.PkgPath() == ""
 }
 
-func (sh *Service) functionCall(key string, meta map[any]any, payload []byte) (any, error) {
+func (sh *Service) functionCall(key string, meta *utils.MetaDict, payload []byte) (any, error) {
 	m, ok := sh.methodMap[key]
 	if !ok {
 		return nil, fmt.Errorf("functionCall: can't find service method %s", key)
@@ -146,8 +151,8 @@ func (sh *Service) functionCall(key string, meta map[any]any, payload []byte) (a
 	params := make([]reflect.Value, 3)
 	params[0] = m.val
 	ctx := context.Background()
-	for k, v := range meta {
-		ctx = context.WithValue(ctx, k, v)
+	if meta != nil {
+		ctx = context.WithValue(context.Background(), metadataKey, meta)
 	}
 	params[1] = reflect.ValueOf(ctx)
 	params[2] = args.Elem()
@@ -161,7 +166,7 @@ func (sh *Service) functionCall(key string, meta map[any]any, payload []byte) (a
 	}
 	return reply.Interface(), nil
 }
-func (sh *Service) functionStream(id int64, key string, meta map[any]any, payload []byte, send func([]byte) error) error {
+func (sh *Service) functionStream(id int64, key string, meta *utils.MetaDict, payload []byte, send func([]byte) error) error {
 	m, ok := sh.methodMap[key]
 	if !ok {
 		return fmt.Errorf("functionStream: can't find service method %s", key)
@@ -170,14 +175,13 @@ func (sh *Service) functionStream(id int64, key string, meta map[any]any, payloa
 		m.stream = &Stream{ctx: context.Background(), id: id, serviceMethod: key, send: send, marshal: sh.Marshal, unmarshal: sh.Unmarshal}
 		m.stream.payload = make(chan []byte, 16)
 		sh.methodMap[key] = m
-		ctx := context.Background()
-		for k, v := range meta {
-			ctx = context.WithValue(ctx, k, v)
+		if meta != nil {
+			m.stream.ctx = MetadataContext(m.stream.ctx, meta)
 		}
 		go func() {
 			params := make([]reflect.Value, 3)
 			params[0] = m.val
-			params[1] = reflect.ValueOf(ctx)
+			params[1] = reflect.ValueOf(m.stream.ctx)
 			params[2] = reflect.ValueOf(m.stream)
 			function := m.method.Func
 			returnValues := function.Call(params)
@@ -197,11 +201,13 @@ func (sh *Service) functionStream(id int64, key string, meta map[any]any, payloa
 func (sh *Service) sendError(f Frame, send func([]byte) error, err error) error {
 	f.Status = utils.StatusError16
 	f.Payload = err.Error()
-	buf, err := f.MarshalBinary(sh.Marshal, makeBytes)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	err = f.MarshalBinary(sh.Marshal, buf)
 	if err != nil {
 		return fmt.Errorf("sendError: marshal fail %s: %w", err.Error(), err)
 	}
-	return send(buf)
+	return send(buf.bytes())
 }
 
 //serveRequest h
@@ -234,9 +240,11 @@ func (sh *Service) serveRequest(send func([]byte) error, recv []byte) error {
 		}
 	}
 	f.Status = utils.StatusResponse16
-	buf, err := f.MarshalBinary(sh.Marshal, makeBytes)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	err = f.MarshalBinary(sh.Marshal, buf)
 	if err == nil {
-		err = send(buf)
+		err = send(buf.bytes())
 	}
 	return err
 }

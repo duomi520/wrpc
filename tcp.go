@@ -1,14 +1,14 @@
 package wrpc
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"runtime/debug"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/duomi520/utils"
@@ -22,17 +22,19 @@ const defaultProtocolMagicNumber uint32 = 2299
 
 //TCPServer TCP服务
 type TCPServer struct {
-	Ctx                 context.Context
 	tcpAddress          *net.TCPAddr
 	tcpListener         *net.TCPListener
 	ProtocolMagicNumber uint32
 	tcpPort             string
 	Handler             func(func([]byte) error, []byte) error
-	Logger              utils.ILogger
+	// 1 - stop
+	stop   int32
+	once   sync.Once
+	Logger utils.ILogger
 }
 
 //NewTCPServer 新建
-func NewTCPServer(ctx context.Context, port string, h func(func([]byte) error, []byte) error, logger utils.ILogger) *TCPServer {
+func NewTCPServer(port string, h func(func([]byte) error, []byte) error, logger utils.ILogger) *TCPServer {
 	if h == nil {
 		logger.Fatal("TCP Handler不为nil")
 		return nil
@@ -48,30 +50,32 @@ func NewTCPServer(ctx context.Context, port string, h func(func([]byte) error, [
 		return nil
 	}
 	s := &TCPServer{
-		Ctx:                 ctx,
 		tcpAddress:          tcpAddress,
 		tcpListener:         listener,
 		ProtocolMagicNumber: defaultProtocolMagicNumber,
 		tcpPort:             port,
 		Handler:             h,
+		stop:                0,
 		Logger:              logger,
 	}
 	return s
 }
 
+//Stop 关闭
+func (s *TCPServer) Stop() {
+	atomic.StoreInt32(&s.stop, 1)
+	s.once.Do(func() {
+		if err := s.tcpListener.Close(); err != nil {
+			s.Logger.Error("TCP监听端口关闭失败: ", err.Error())
+		} else {
+			s.Logger.Debug("TCP监听端口关闭。")
+		}
+		time.Sleep(100 * time.Millisecond)
+	})
+}
+
 //Run 运行
 func (s *TCPServer) Run() {
-	go func() {
-		var closeOnce sync.Once
-		<-s.Ctx.Done()
-		closeOnce.Do(func() {
-			if err := s.tcpListener.Close(); err != nil {
-				s.Logger.Error("TCP监听端口关闭失败: ", err.Error())
-			} else {
-				s.Logger.Debug("TCP监听端口关闭。")
-			}
-		})
-	}()
 	s.Logger.Debug("TCP监听端口", s.tcpPort)
 	s.Logger.Debug("TCP已初始化连接，等待客户端连接……")
 	tcpGroup := sync.WaitGroup{}
@@ -125,10 +129,10 @@ func (s *TCPServer) Run() {
 		conn.SetKeepAlivePeriod(3 * time.Minute)
 		conn.SetLinger(10)
 		session := &TCPSession{
-			Ctx:     s.Ctx,
-			conn:    conn,
-			Handler: s.Handler,
-			Logger:  s.Logger,
+			conn:     conn,
+			Handler:  s.Handler,
+			stopSign: &s.stop,
+			Logger:   s.Logger,
 		}
 		tcpGroup.Add(1)
 		go func() {
@@ -139,38 +143,26 @@ func (s *TCPServer) Run() {
 	s.Logger.Debug("TCP等待子协程关闭……")
 	tcpGroup.Wait()
 	s.Logger.Debug("TCPServer关闭。")
+	time.Sleep(100 * time.Millisecond)
 }
 
 //TCPSession 会话
 type TCPSession struct {
-	Ctx       context.Context
-	conn      *net.TCPConn
-	Handler   func(func([]byte) error, []byte) error
-	stopSign  bool
-	stopChan  chan struct{}
-	closeOnce sync.Once
-	Logger    utils.ILogger
-}
-
-func (ts *TCPSession) release() {
-	ts.closeOnce.Do(func() {
-		ts.stopSign = true
-		close(ts.stopChan)
-	})
+	conn    *net.TCPConn
+	Handler func(func([]byte) error, []byte) error
+	// 1 - stop
+	stopSign *int32
+	Logger   utils.ILogger
 }
 
 func (ts *TCPSession) tcpClientReceive() {
-	defer func() {
-		ts.release()
-		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive stop")
-	}()
 	//IO读缓存
 	buf := make([]byte, TCPBufferSize)
 	//buf 写、读位置序号
 	var iw, ir int
 	var err error
 	for {
-		if ts.stopSign {
+		if atomic.LoadInt32(ts.stopSign) == 1 {
 			goto end
 		}
 		if err = ts.conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
@@ -218,27 +210,17 @@ end:
 			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive：", err.Error())
 		}
 	}
+	atomic.StoreInt32(ts.stopSign, 1)
+	ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive stop")
 }
 
 func (ts *TCPSession) tcpServerReceive() {
-	defer func() {
-		if err := ts.conn.Close(); err != nil {
-			ts.Logger.Error(err.Error())
-		}
-		if r := recover(); r != nil {
-			ts.Logger.Error(fmt.Sprintf("tcpServerReceive %v \n%s", r, string(debug.Stack())))
-		}
-		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive stop")
-	}()
 	//未处理的数据
 	var unhandled []byte
 	var err error
 	for {
-		// TODO 优化
-		select {
-		case <-ts.Ctx.Done():
+		if atomic.LoadInt32(ts.stopSign) == 1 {
 			goto end
-		default:
 		}
 		sl := getSlot()
 		if len(unhandled) > 0 {
@@ -255,7 +237,7 @@ func (ts *TCPSession) tcpServerReceive() {
 			goto end
 		}
 		size := n + len(unhandled)
-		sl.setSize(uint64(size))
+		sl.setLen(uint64(size))
 		unhandled = unhandled[0:0]
 		cursor := 0
 		//处理数据
@@ -267,6 +249,10 @@ func (ts *TCPSession) tcpServerReceive() {
 			}
 			flag := utils.BytesToInteger16[uint16](sl.buf[cursor+4 : cursor+6])
 			if flag == utils.StatusGoaway16 {
+				if err := ts.sendWithDeadline(500*time.Millisecond, frameGoaway); err != nil {
+					sl.release()
+					goto end
+				}
 				sl.release()
 				goto end
 			}
@@ -298,6 +284,10 @@ end:
 			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive: ", err.Error())
 		}
 	}
+	if err = ts.conn.Close(); err != nil {
+		ts.Logger.Error(err.Error())
+	}
+	ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive stop")
 }
 
 type task struct {
@@ -308,6 +298,18 @@ type task struct {
 }
 
 func (t task) do() {
+	defer func() {
+		if err := recover(); err != nil {
+			const size = 65536
+			buf := make([]byte, size)
+			end := runtime.Stack(buf, false)
+			if end > size {
+				end = size
+			}
+			buf = buf[:end]
+			t.session.Logger.Error(fmt.Sprintf("task.do： %s \n%s", err, buf))
+		}
+	}()
 	if err := t.session.Handler(t.session.Send, t.s.buf[t.l:t.r]); err != nil {
 		t.session.Logger.Error("task.do: " + err.Error())
 	}
@@ -315,7 +317,7 @@ func (t task) do() {
 }
 
 //TCPDial 连接
-func TCPDial(ctx context.Context, url string, protocolMagicNumber uint32, h func(func([]byte) error, []byte) error, logger utils.ILogger) (*TCPSession, error) {
+func TCPDial(url string, protocolMagicNumber uint32, h func(func([]byte) error, []byte) error, logger utils.ILogger) (*TCPSession, error) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", url)
 	if err != nil {
 		return nil, errors.New("TCPDial tcpAddr fail: " + err.Error())
@@ -327,58 +329,55 @@ func TCPDial(ctx context.Context, url string, protocolMagicNumber uint32, h func
 	if conn.SetNoDelay(false) != nil {
 		return nil, errors.New("TCPDial 设定操作系统是否应该延迟数据包传递失败: " + err.Error())
 	}
+	var sign int32
 	c := &TCPSession{
-		Ctx:      ctx,
 		conn:     conn,
 		Handler:  h,
-		stopSign: false,
-		stopChan: make(chan struct{}),
+		stopSign: &sign,
 		Logger:   logger,
 	}
 	go c.tcpClientReceive()
-	go c.tcpSend()
-	//发送协议头
-	if err := conn.SetWriteDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
-		c.release()
-		return nil, errors.New("写入协议头超时: " + err.Error())
+	if err := defaultGuardian.AddJob(c.tcpPing); err != nil {
+		return nil, errors.New("定时任务失败: " + err.Error())
 	}
+	//发送协议头
 	pm := make([]byte, 4)
 	utils.CopyInteger32(pm, protocolMagicNumber)
-	if _, err := conn.Write(pm); err != nil {
-		c.release()
+	if err := c.sendWithDeadline(DefaultDeadlineDuration, pm); err != nil {
+		atomic.StoreInt32(&sign, 1)
 		return nil, errors.New("写入协议头失败: " + err.Error())
 	}
 	return c, nil
 }
-
-func (ts *TCPSession) tcpSend() {
-	ticker := time.NewTicker(DefaultHeartbeatPeriodDuration)
+func (ts *TCPSession) tcpPing() bool {
+	var exit bool
 	defer func() {
-		if err := ts.Send(frameGoaway); err != nil {
-			ts.Logger.Error(err.Error())
-		}
-		ts.release()
-		ticker.Stop()
-		ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpSend stop")
-	}()
-	for {
-		select {
-		case <-ticker.C:
-			if err := ts.Send(framePing); err != nil {
+		if exit {
+			if err := ts.sendWithDeadline(500*time.Millisecond, frameGoaway); err != nil {
 				ts.Logger.Error(err.Error())
-				return
 			}
-		case <-ts.Ctx.Done():
-			return
-		case <-ts.stopChan:
-			return
+			atomic.StoreInt32(ts.stopSign, 1)
+			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpPing stop")
 		}
+	}()
+	if atomic.LoadInt32(ts.stopSign) == 1 {
+		exit = true
+		return exit
 	}
+	if err := ts.sendWithDeadline(500*time.Millisecond, framePing); err != nil {
+		exit = true
+		return exit
+	}
+	return exit
 }
 
 //Send 发送
 func (ts *TCPSession) Send(message []byte) error {
-	if err := ts.conn.SetWriteDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
+	return ts.sendWithDeadline(DefaultDeadlineDuration, message)
+}
+
+func (ts *TCPSession) sendWithDeadline(d time.Duration, message []byte) error {
+	if err := ts.conn.SetWriteDeadline(time.Now().Add(d)); err != nil {
 		return err
 	}
 	if _, err := ts.conn.Write(message); err != nil {

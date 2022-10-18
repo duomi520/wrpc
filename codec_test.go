@@ -9,17 +9,20 @@ import (
 )
 
 func TestFrame(t *testing.T) {
-	meta := make(map[any]any, 16)
-	meta["charset"] = "utf-8"
+	var meta utils.MetaDict
+	meta.Set("charset", "utf-8")
 	var tests = []Frame{
 		{utils.StatusRequest16, 1, "wang", nil, "hi"},
-		{utils.StatusResponse16, 2, "劳动节5.1", meta, "International Labour Day"},
+		{utils.StatusResponse16, 2, "劳动节5.1", &meta, "International Labour Day"},
 	}
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
 	for i := range tests {
-		data, err := tests[i].MarshalBinary(json.Marshal, func(size int) []byte { return make([]byte, size) })
+		err := tests[i].MarshalBinary(json.Marshal, buf)
 		if err != nil {
 			t.Fatal(err.Error())
 		}
+		data := buf.bytes()
 		f := &Frame{}
 		l, err := f.UnmarshalHeader(data)
 		if err != nil {
@@ -42,9 +45,12 @@ func TestFrame(t *testing.T) {
 			t.Errorf("expected %d got %d", tests[i].Status, GetStatus(data))
 		}
 		if f.Metadata != nil {
-			if !strings.EqualFold(f.Metadata["charset"].(string), meta["charset"].(string)) {
-				t.Errorf("expected %s got %s", meta["charset"], f.Metadata["charset"])
+			expected, _ := meta.Get("charset")
+			got, _ := f.Metadata.Get("charset")
+			if !strings.EqualFold(expected, got) {
+				t.Errorf("expected %s got %s", expected, got)
 			}
 		}
+
 	}
 }

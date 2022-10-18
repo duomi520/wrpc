@@ -1,8 +1,6 @@
 package wrpc
 
 import (
-	"bytes"
-	"encoding/gob"
 	"errors"
 	"github.com/duomi520/utils"
 )
@@ -48,50 +46,43 @@ type Frame struct {
 	Status        uint16
 	Seq           int64
 	ServiceMethod string
-	//TODO Metadata 取消map，用string替代
-	Metadata map[any]any
-	Payload  any
-}
-
-func makeBytes(size int) []byte {
-	return make([]byte, size)
+	Metadata      *utils.MetaDict
+	Payload       any
 }
 
 //MarshalBinary 编码
-func (f Frame) MarshalBinary(marshal func(any) ([]byte, error), alloc func(int) []byte) ([]byte, error) {
+func (f Frame) MarshalBinary(marshal func(any) ([]byte, error), buf *buffer) error {
+	buf.reset()
+	d := buf.getbuf()
+	lenght := 0
 	//编码Payload
-	buf, err := marshal(f.Payload)
+	data, err := marshal(f.Payload)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	var lenght int
-	var d []byte
 	ServiceMethodEnd := 18 + uint16(len(f.ServiceMethod))
-	var MetadataEnd uint16
+	MetadataEnd := ServiceMethodEnd
 	//编码Metadata
 	if f.Metadata != nil {
-		var meta bytes.Buffer
-		enc := gob.NewEncoder(&meta)
-		if err := enc.Encode(f.Metadata); err != nil {
-			return nil, err
+		var n int
+		var e error
+		n, e = f.Metadata.Encode(d[ServiceMethodEnd:])
+		for e != nil {
+			buf.grow(buf.cap())
+			n, e = f.Metadata.Encode(d[ServiceMethodEnd:])
 		}
-		MetadataEnd = ServiceMethodEnd + uint16(meta.Len())
-		lenght = int(MetadataEnd) + len(buf)
-		d = alloc(lenght)
-		copy(d[ServiceMethodEnd:MetadataEnd], meta.Bytes())
-	} else {
-		MetadataEnd = ServiceMethodEnd
-		lenght = int(ServiceMethodEnd) + len(buf)
-		d = alloc(lenght)
+		MetadataEnd += uint16(n)
 	}
+	lenght = int(MetadataEnd) + len(data)
 	utils.CopyInteger32(d[0:4], uint32(lenght))
 	utils.CopyInteger16(d[4:6], f.Status)
 	utils.CopyInteger64(d[6:14], f.Seq)
 	utils.CopyInteger16(d[14:16], ServiceMethodEnd)
 	utils.CopyInteger16(d[16:18], MetadataEnd)
 	copy(d[18:ServiceMethodEnd], utils.StringToBytes(f.ServiceMethod))
-	copy(d[MetadataEnd:], buf)
-	return d, nil
+	copy(d[MetadataEnd:], data)
+	buf.setValid(lenght)
+	return nil
 }
 
 //UnmarshalHeader 解码头部，Payload不解析，返会头长度及错误
@@ -105,16 +96,9 @@ func (f *Frame) UnmarshalHeader(data []byte) (int, error) {
 	MetadataEnd := utils.BytesToInteger16[uint16](data[16:18])
 	f.ServiceMethod = string(data[18:ServiceMethodEnd])
 	if ServiceMethodEnd != MetadataEnd {
-		var meta bytes.Buffer
-		_, err := meta.Write(data[ServiceMethodEnd:MetadataEnd])
-		if err != nil {
-			return 0, err
-		}
-		dec := gob.NewDecoder(&meta)
-		err = dec.Decode(&f.Metadata)
-		if err != nil {
-			return 0, err
-		}
+		var m utils.MetaDict
+		f.Metadata = &m
+		f.Metadata.Decode(data[ServiceMethodEnd:MetadataEnd])
 	}
 	return int(MetadataEnd), nil
 }

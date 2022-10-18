@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/duomi520/utils"
 	"log"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/duomi520/utils"
 )
 
 type Args struct {
@@ -92,6 +94,8 @@ func TestFunctionCall(t *testing.T) {
 */
 
 func TestRPC(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	o := NewOptions(WithLogger(logger))
@@ -100,8 +104,7 @@ func TestRPC(t *testing.T) {
 	if err := r.RegisterRPC("计算", arith); err != nil {
 		t.Fatal(err)
 	}
-	ctx, ctxExitFunc := context.WithCancel(context.Background())
-	s := NewTCPServer(ctx, ":4567", r.serveRequest, logger)
+	s := NewTCPServer(":4567", r.serveRequest, logger)
 	go s.Run()
 	rc1 := rpcResponseGet()
 	rc2 := rpcResponseGet()
@@ -111,10 +114,11 @@ func TestRPC(t *testing.T) {
 		rpcResponsePut(rc2)
 		rpcResponsePut(rc3)
 	}()
-	c, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	c, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer c.Close()
 	var reply1 int
 	rc1.reply = &reply1
 	var reply2, reply3 Quotient
@@ -126,37 +130,52 @@ func TestRPC(t *testing.T) {
 	c.callMap.Store(int64(2), rc2)
 	c.callMap.Store(int64(3), rc3)
 	f1 := Frame{utils.StatusRequest16, 1, "计算.Multiply", nil, Args{7, 8}}
-	buf, _ := f1.MarshalBinary(json.Marshal, makeBytes)
-	if err := c.send(buf); err != nil {
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	f1.MarshalBinary(json.Marshal, buf)
+	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
 	f2 := Frame{utils.StatusRequest16, 2, "计算.Divide", nil, Args{7, 8}}
-	buf, _ = f2.MarshalBinary(json.Marshal, makeBytes)
-	if err := c.send(buf); err != nil {
+	buf.reset()
+	f2.MarshalBinary(json.Marshal, buf)
+	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
 	f3 := Frame{utils.StatusRequest16, 3, "计算.Divide", nil, Args{9, 0}}
-	buf, _ = f3.MarshalBinary(json.Marshal, makeBytes)
-	if err := c.send(buf); err != nil {
+	buf.reset()
+	f3.MarshalBinary(json.Marshal, buf)
+	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
-	<-rc1.Done
-	<-rc2.Done
-	<-rc3.Done
-	time.Sleep(250 * time.Millisecond)
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		<-rc1.Done
+		wg.Done()
+	}()
+	go func() {
+		<-rc2.Done
+		wg.Done()
+	}()
+	go func() {
+		<-rc3.Done
+		wg.Done()
+	}()
+	wg.Wait()
 	fmt.Println(reply1, reply2, rc3.Error)
-	ctxExitFunc()
+	s.Stop()
 	time.Sleep(5 * time.Second)
 }
 
 /*
-[Debug] 2022-10-07 15:30:36 TCP监听端口:4567
-[Debug] 2022-10-07 15:30:36 TCP已初始化连接，等待客户端连接……
+[Info ] 2022-10-17 20:54:59 Pid: 82252
+[Debug] 2022-10-17 20:54:59 TCP监听端口:4567
+[Debug] 2022-10-17 20:54:59 TCP已初始化连接，等待客户端连接……
 56 {0 7} divide by zero
-[Debug] 2022-10-07 15:30:36 TCP监听端口关闭。
-[Debug] 2022-10-07 15:30:36 TCP等待子协程关闭……
-[Debug] 2022-10-07 15:30:41 127.0.0.1:59558 tcpServerReceive stop
-[Debug] 2022-10-07 15:30:41 127.0.0.1:4567 tcpClientReceive stop
-[Debug] 2022-10-07 15:30:41 TCPServer关闭。
-[Debug] 2022-10-07 15:30:41 127.0.0.1:4567 tcpSend stop
+[Debug] 2022-10-17 20:54:59 TCP监听端口关闭。
+[Debug] 2022-10-17 20:54:59 TCP等待子协程关闭……
+[Debug] 2022-10-17 20:55:04 127.0.0.1:60876 tcpServerReceive stop
+[Debug] 2022-10-17 20:55:04 TCPServer关闭。
+[Debug] 2022-10-17 20:55:04 127.0.0.1:4567 tcpClientReceive stop
 */

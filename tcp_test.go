@@ -1,8 +1,8 @@
 package wrpc
 
 import (
-	"context"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,77 +10,82 @@ import (
 )
 
 func TestTCPDial(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	h := func(send func([]byte) error, msg []byte) error { return nil }
-	s := NewTCPServer(context.TODO(), ":4567", h, logger)
+	s := NewTCPServer(":4567", h, logger)
+	defer s.Stop()
 	go s.Run()
-	ctx, ctxExitFunc := context.WithCancel(context.Background())
-	_, err := TCPDial(ctx, "127.0.0.1:4567", defaultProtocolMagicNumber, h, logger)
+	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	ctxExitFunc()
-	time.Sleep(100 * time.Millisecond)
+	atomic.StoreInt32(c.stopSign, 1)
+	c.Send(frameGoaway)
+	time.Sleep(1 * time.Second)
 }
 
 /*
-[Debug] 2022-10-07 15:32:08 TCP监听端口:4567
-[Debug] 2022-10-07 15:32:08 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-07 15:32:08 127.0.0.1:4567 tcpSend stop
-[Debug] 2022-10-07 15:32:08 127.0.0.1:4567 tcpClientReceive stop
-[Debug] 2022-10-07 15:32:08 127.0.0.1:59576 tcpServerReceive stop
+[Debug] 2022-10-17 20:37:57 TCP监听端口:4567
+[Debug] 2022-10-17 20:37:57 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-17 20:37:57 127.0.0.1:4567 tcpClientReceive stop
+[Debug] 2022-10-17 20:37:57 127.0.0.1:56682 tcpServerReceive stop
+[Debug] 2022-10-17 20:37:58 TCP等待子协程关闭……
+[Debug] 2022-10-17 20:37:58 TCPServer关闭。
+[Debug] 2022-10-17 20:37:58 TCP监听端口关闭。
 */
 
 func TestTCPGracefulStop(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
-	ctx, ctxExitFunc := context.WithCancel(context.Background())
 	h := func(send func([]byte) error, msg []byte) error { return nil }
-	s := NewTCPServer(ctx, ":4568", h, logger)
+	s := NewTCPServer(":4568", h, logger)
 	go s.Run()
-	_, err := TCPDial(context.TODO(), "127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
+	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = TCPDial(context.TODO(), "127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
+	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(250 * time.Millisecond)
-	ctxExitFunc()
+	s.Stop()
 	time.Sleep(5 * time.Second)
 }
 
 /*
-[Debug] 2022-10-07 15:32:29 TCP监听端口:4568
-[Debug] 2022-10-07 15:32:29 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-07 15:32:29 TCP监听端口关闭。
-[Debug] 2022-10-07 15:32:29 TCP等待子协程关闭……
-[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpClientReceive stop
-[Debug] 2022-10-07 15:32:33 127.0.0.1:59582 tcpServerReceive stop
-[Debug] 2022-10-07 15:32:33 127.0.0.1:59583 tcpServerReceive stop
-[Debug] 2022-10-07 15:32:33 TCPServer关闭。
-[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpSend stop
-[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpClientReceive stop
-[Debug] 2022-10-07 15:32:33 127.0.0.1:4568 tcpSend stop
+[Debug] 2022-10-17 20:40:10 TCP监听端口:4568
+[Debug] 2022-10-17 20:40:10 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-17 20:40:10 TCP监听端口关闭。
+[Debug] 2022-10-17 20:40:10 TCP等待子协程关闭……
+[Debug] 2022-10-17 20:40:15 127.0.0.1:57259 tcpServerReceive stop
+[Debug] 2022-10-17 20:40:15 127.0.0.1:4568 tcpClientReceive stop
+[Debug] 2022-10-17 20:40:15 127.0.0.1:4568 tcpClientReceive stop
+[Debug] 2022-10-17 20:40:15 127.0.0.1:57258 tcpServerReceive stop
+[Debug] 2022-10-17 20:40:15 TCPServer关闭。
 */
 func TestTCPEcho(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	var num, count int
 	//50000
 	loop := 50000
 	stop := make(chan struct{})
-	ctx, ctxExitFunc := context.WithCancel(context.Background())
 	hs := func(send func([]byte) error, msg []byte) error {
 		data := make([]byte, len(msg))
 		copy(data, msg)
 		send(data)
 		return nil
 	}
-	s := NewTCPServer(ctx, ":4568", hs, logger)
+	s := NewTCPServer(":4568", hs, logger)
 	go s.Run()
 	hc := func(send func([]byte) error, msg []byte) error {
 		n := int(utils.BytesToInteger32[uint32](msg[6:10]))
@@ -92,7 +97,7 @@ func TestTCPEcho(t *testing.T) {
 		}
 		return nil
 	}
-	c, err := TCPDial(ctx, "127.0.0.1:4568", defaultProtocolMagicNumber, hc, logger)
+	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, hc, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +109,9 @@ func TestTCPEcho(t *testing.T) {
 	}
 	<-stop
 	time.Sleep(250 * time.Millisecond)
-	ctxExitFunc()
-	time.Sleep(1000 * time.Millisecond)
+	s.Stop()
+	atomic.StoreInt32(c.stopSign, 1)
+	time.Sleep(5 * time.Second)
 	if count != (loop-1)*loop/2 {
 		logger.Debug(strconv.Itoa(count), " <> ", strconv.Itoa((loop-1)*loop/2))
 		t.Fatal("count err")
@@ -114,13 +120,13 @@ func TestTCPEcho(t *testing.T) {
 }
 
 /*
-[Debug] 2022-10-07 15:33:25 TCP监听端口:4568
-[Debug] 2022-10-07 15:33:25 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-07 15:33:26 127.0.0.1:4568 tcpSend stop
-[Debug] 2022-10-07 15:33:26 TCP等待子协程关闭……
-[Debug] 2022-10-07 15:33:26 127.0.0.1:4568 tcpClientReceive stop
-[Debug] 2022-10-07 15:33:26 127.0.0.1:59594 tcpServerReceive stop
-[Debug] 2022-10-07 15:33:26 TCPServer关闭。
-[Debug] 2022-10-07 15:33:26 TCP监听端口关闭。
-[Debug] 2022-10-07 15:33:27 1249975000 = 1249975000
+[Debug] 2022-10-17 20:52:13 TCP监听端口:4568
+[Debug] 2022-10-17 20:52:13 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-17 20:52:13 TCP等待子协程关闭……
+[Debug] 2022-10-17 20:52:13 TCP监听端口关闭。
+[Debug] 2022-10-17 20:52:18 127.0.0.1:4568 tcpPing stop
+[Debug] 2022-10-17 20:52:18 127.0.0.1:4568 tcpClientReceive stop
+[Debug] 2022-10-17 20:52:18 127.0.0.1:60070 tcpServerReceive stop
+[Debug] 2022-10-17 20:52:18 TCPServer关闭。
+[Debug] 2022-10-17 20:52:19 1249975000 = 1249975000
 */

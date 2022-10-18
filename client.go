@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/duomi520/utils"
 	"sync"
+	"sync/atomic"
+
+	"github.com/duomi520/utils"
 )
 
 //Client 连接
@@ -13,11 +15,11 @@ type Client struct {
 	Options
 	callMap sync.Map
 	connect
-	release func()
+	stopSign *int32
 }
 
 //NewTCPClient 新
-func NewTCPClient(ctx context.Context, url string, o *Options) (*Client, error) {
+func NewTCPClient(url string, o *Options) (*Client, error) {
 	c := &Client{
 		Options: *o,
 	}
@@ -26,30 +28,33 @@ func NewTCPClient(ctx context.Context, url string, o *Options) (*Client, error) 
 	if err != nil {
 		return nil, err
 	}
-	t, err := TCPDial(ctx, url, o.ProtocolMagicNumber, c.clientHandler, o.Logger)
+	t, err := TCPDial(url, o.ProtocolMagicNumber, c.clientHandler, o.Logger)
 	if err != nil {
 		return nil, err
 	}
 	c.send = t.Send
-	c.release = t.release
+	c.stopSign = t.stopSign
 	return c, nil
 }
 
 //Close 关闭
 func (c *Client) Close() {
-	c.release()
+	atomic.StoreInt32(c.stopSign, 1)
+	c.send(frameGoaway)
 }
 
 func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, serviceMethod string, args any) error {
 	f := Frame{Status: status, Seq: seq, ServiceMethod: serviceMethod, Payload: args}
-	if v := ctx.Value(ContextKey); v != nil {
-		f.Metadata = v.(map[any]any)
+	if v := ctx.Value(metadataKey); v != nil {
+		f.Metadata = v.(*utils.MetaDict)
 	}
-	buf, err := f.MarshalBinary(c.Marshal, makeBytes)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	err := f.MarshalBinary(c.Marshal, buf)
 	if err != nil {
 		return err
 	}
-	err = c.send(buf)
+	err = c.send(buf.bytes())
 	return err
 }
 
@@ -109,8 +114,12 @@ func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any
 	}
 }
 
-//Go Go异步的调用函数。
+//TODO Notify模式
+
+/*
+//Go Go异步的调用函数。 待删
 func (c *Client) Go(ctx context.Context, serviceMethod string, args, reply any, done chan struct{}) error {
+	//TODO　ctx.Done 起作用
 	id, err := c.snowFlakeID.NextID()
 	if err != nil {
 		return err
@@ -125,7 +134,7 @@ func (c *Client) Go(ctx context.Context, serviceMethod string, args, reply any, 
 	r.client = c
 	c.callMap.Store(id, &r)
 	return c.sendFrame(ctx, utils.StatusRequest16, id, serviceMethod, args)
-}
+}*/
 
 //NewStream
 func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, error) {
@@ -143,14 +152,16 @@ func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, 
 		ServiceMethod: serviceMethod,
 		Payload:       nil,
 	}
-	if v := ctx.Value(ContextKey); v != nil {
-		f.Metadata = v.(map[any]any)
+	if v := GetMetadata(ctx); v != nil {
+		f.Metadata = v
 	}
-	buf, err := f.MarshalBinary(s.marshal, makeBytes)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	err = f.MarshalBinary(s.marshal, buf)
 	if err != nil {
 		return nil, fmt.Errorf("NewStream: marshal fail %s", err.Error())
 	}
-	err = c.send(buf)
+	err = c.send(buf.bytes())
 	if err != nil {
 		return nil, fmt.Errorf("NewStream: %s", err.Error())
 	}
@@ -234,3 +245,6 @@ func (c *Client) clientHandler(send func([]byte) error, recv []byte) error {
 	}
 	return nil
 }
+
+// https://www.jianshu.com/p/0b7cf0bdbe92
+// https://www.modb.pro/db/383217

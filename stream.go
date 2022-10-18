@@ -25,11 +25,13 @@ func (s *Stream) Send(data any) error {
 	f.Seq = s.id
 	f.ServiceMethod = s.serviceMethod
 	f.Payload = data
-	buf, err := f.MarshalBinary(s.marshal, makeBytes)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	err := f.MarshalBinary(s.marshal, buf)
 	if err != nil {
 		return fmt.Errorf("marshal fail %s", err.Error())
 	}
-	err = s.send(buf)
+	err = s.send(buf.bytes())
 	return err
 }
 
@@ -42,7 +44,6 @@ func (s *Stream) Recv() (any, error) {
 }
 
 //Free 释放
-
 func (s *Stream) release() {
 	s.closeOnce.Do(func() {
 		close(s.payload)

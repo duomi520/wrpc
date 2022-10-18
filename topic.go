@@ -31,10 +31,12 @@ func (t *Topic) Broadcast(data []byte) error {
 		return err
 	}
 	f := Frame{Status: utils.StatusBroadcast16, Seq: id, ServiceMethod: t.Name, Payload: data}
-	buf, err := f.MarshalBinary(t.Marshal, makeBytes)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	err = f.MarshalBinary(t.Marshal, buf)
 	if err != nil {
 		return err
 	}
-	t.traverse(buf)
+	t.traverse(buf.bytes())
 	return nil
 }

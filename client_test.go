@@ -22,17 +22,21 @@ func (hi *hi) Error(_ context.Context, args string) (string, error) {
 	return "", errors.New("This a error.")
 }
 func (hi *hi) Meta(ctx context.Context, args string) (string, error) {
-	log.Println(ctx.Value("charset"), ctx.Value("content"), ctx.Value("http-equiv"))
+	m := GetMetadata(ctx)
+	log.Println(m.GetAll())
 	return "", nil
 }
 
 func TestClientCall(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	o := NewOptions()
 	s := NewService(o)
-	s.TCPServer(context.TODO(), ":4567")
+	s.TCPServer(":4567")
+	defer s.Stop()
 	hi := new(hi)
 	s.RegisterRPC("hi", hi)
-	client, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	client, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -48,22 +52,31 @@ func TestClientCall(t *testing.T) {
 			t.Fatal(reply)
 		}
 	}
-	meta := make(map[any]any)
-	meta["charset"] = "utf-8"
-	meta["content"] = "webkit"
-	meta["http-equiv"] = "X-UA-Compatible"
-	ctx := context.WithValue(context.Background(), ContextKey, meta)
+	var meta utils.MetaDict
+	meta.Set("charset", "utf-8")
+	meta.Set("content", "webkit")
+	meta.Set("http-equiv", "X-UA-Compatible")
+	ctx := MetadataContext(context.Background(), &meta)
 	if err := client.Call(ctx, "hi.Meta", "linda", &reply); err != nil {
 		t.Fatal(err.Error())
 	}
 }
+
+/*
+2022/10/18 20:41:30 [charset content http-equiv] [utf-8 webkit X-UA-Compatible]
+*/
+
+/*
 func TestClientGo(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	o := NewOptions()
 	s := NewService(o)
-	s.TCPServer(context.TODO(), ":4567")
+	s.TCPServer(":4567")
+	defer s.Stop()
 	hi := new(hi)
 	s.RegisterRPC("hi", hi)
-	client, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	client, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -78,31 +91,34 @@ func TestClientGo(t *testing.T) {
 		t.Fatal(reply)
 	}
 }
+*/
 func TestClientClose(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	o := NewOptions(WithLogger(logger))
-	ctx, ctxExitFunc := context.WithCancel(context.Background())
 	s := NewService(o)
-	s.TCPServer(ctx, ":4567")
+	s.TCPServer(":4567")
 	hi := new(hi)
 	s.RegisterRPC("hi", hi)
-	client, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	client, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
 	client.Close()
 	time.Sleep(250 * time.Millisecond)
-	ctxExitFunc()
-	time.Sleep(time.Second)
+	s.Stop()
+	time.Sleep(6 * time.Second)
 }
 
 /*
-[Debug] 2022-10-07 17:37:34 TCP监听端口:4567
-[Debug] 2022-10-07 17:37:34 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-07 17:37:34 127.0.0.1:4567 tcpClientReceive stop
-[Debug] 2022-10-07 17:37:34 127.0.0.1:4567 tcpSend stop
-[Debug] 2022-10-07 17:37:34 127.0.0.1:61158 tcpServerReceive stop
-[Debug] 2022-10-07 17:37:34 TCP等待子协程关闭……
-[Debug] 2022-10-07 17:37:34 TCPServer关闭。
-[Debug] 2022-10-07 17:37:34 TCP监听端口关闭。
+[Info ] 2022-10-17 20:58:46 Pid: 90012
+[Debug] 2022-10-17 20:58:46 TCP监听端口:4567
+[Debug] 2022-10-17 20:58:46 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-10-17 20:58:46 127.0.0.1:4567 tcpClientReceive stop
+[Debug] 2022-10-17 20:58:46 127.0.0.1:61949 tcpServerReceive stop
+[Debug] 2022-10-17 20:58:47 TCP等待子协程关闭……
+[Debug] 2022-10-17 20:58:47 TCPServer关闭。
+[Debug] 2022-10-17 20:58:47 TCP监听端口关闭。
+[Debug] 2022-10-17 20:58:51 127.0.0.1:4567 tcpPing stop
 */

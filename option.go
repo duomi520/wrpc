@@ -2,8 +2,11 @@ package wrpc
 
 import (
 	"encoding/json"
-	"github.com/duomi520/utils"
+	"os"
+	"strconv"
 	"time"
+
+	"github.com/duomi520/utils"
 )
 
 var snowFlakeStartupTime int64 = time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC).UnixNano()
@@ -50,6 +53,7 @@ func WithProtocolMagicNumber(pm uint32) Option {
 //WithLogger 日志
 func WithLogger(l utils.ILogger) Option {
 	return func(o *Options) {
+		l.Info("Pid: ", strconv.Itoa(os.Getpid()))
 		o.Logger = l
 	}
 }

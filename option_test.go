@@ -1,9 +1,10 @@
 package wrpc
 
 import (
-	"github.com/duomi520/utils"
 	"reflect"
 	"testing"
+
+	"github.com/duomi520/utils"
 )
 
 func TestOptions(t *testing.T) {

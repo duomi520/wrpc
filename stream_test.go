@@ -11,7 +11,7 @@ import (
 )
 
 func (hi *hi) Order(ctx context.Context, s *Stream) error {
-	log.Println(ctx.Value("charset"), ctx.Value("content"), ctx.Value("http-equiv"))
+	log.Println(GetMetadata(ctx))
 	i := 9
 	for i < 25 {
 		req, err := s.Recv()
@@ -31,30 +31,33 @@ func (hi *hi) Order(ctx context.Context, s *Stream) error {
 }
 
 func TestClientStream(t *testing.T) {
+	StartGuardian()
+	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.ErrorLevel, "")
 	defer logger.Close()
 	o := NewOptions(WithLogger(logger))
 	s := NewService(o)
-	s.TCPServer(context.TODO(), ":4567")
+	s.TCPServer(":4567")
+	defer s.Stop()
 	hi := new(hi)
 	err := s.RegisterRPC("hi", hi)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	client, err := NewTCPClient(context.TODO(), "127.0.0.1:4567", o)
+	client, err := NewTCPClient("127.0.0.1:4567", o)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	meta := make(map[any]any)
-	meta["charset"] = "utf-8"
-	meta["content"] = "webkit"
-	meta["http-equiv"] = "X-UA-Compatible"
-	ctx := context.WithValue(context.Background(), ContextKey, meta)
+	defer client.Close()
+	var meta utils.MetaDict
+	meta.Set("charset", "utf-8")
+	meta.Set("content", "webkit")
+	meta.Set("http-equiv", "X-UA-Compatible")
+	ctx := MetadataContext(context.Background(), &meta)
 	rspStream, err := client.NewStream(ctx, "hi.Order")
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	//TODO 发送顺序的bug
 	time.Sleep(time.Second)
 	n := 6
 	// send
@@ -75,17 +78,17 @@ func TestClientStream(t *testing.T) {
 }
 
 /*
-2022/10/07 22:33:46 utf-8 webkit X-UA-Compatible
-2022/10/07 22:33:47 s 10 0
-2022/10/07 22:33:47 c 0 10
-2022/10/07 22:33:47 s 11 2
-2022/10/07 22:33:47 c 1 11
-2022/10/07 22:33:47 s 12 1
-2022/10/07 22:33:47 c 2 12
-2022/10/07 22:33:47 c 3 13
-2022/10/07 22:33:47 s 13 4
-2022/10/07 22:33:47 s 14 5
-2022/10/07 22:33:47 c 4 14
-2022/10/07 22:33:47 s 15 3
-2022/10/07 22:33:47 c 5 15
+2022/10/18 20:50:53 &{3 [charset content http-equiv] [utf-8 webkit X-UA-Compatible]}
+2022/10/18 20:50:54 s 10 0
+2022/10/18 20:50:54 c 0 10
+2022/10/18 20:50:54 s 11 2
+2022/10/18 20:50:54 c 1 11
+2022/10/18 20:50:54 s 12 3
+2022/10/18 20:50:54 s 13 4
+2022/10/18 20:50:54 s 14 5
+2022/10/18 20:50:54 s 15 1
+2022/10/18 20:50:54 c 2 12
+2022/10/18 20:50:54 c 3 13
+2022/10/18 20:50:54 c 4 14
+2022/10/18 20:50:54 c 5 15
 */

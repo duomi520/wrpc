@@ -1,6 +1,11 @@
 package wrpc
 
-import "time"
+import (
+	"context"
+	"time"
+
+	"github.com/duomi520/utils"
+)
 
 //DefaultDeadlineDuration IO超时
 const DefaultDeadlineDuration = 10 * time.Second
@@ -13,4 +18,11 @@ const DefaultHeartbeatPeriodDuration time.Duration = (DefaultHeartbeatDuration *
 
 type favContextKey string
 
-var ContextKey favContextKey = "metadata"
+var metadataKey favContextKey = "metadata"
+
+func MetadataContext(ctx context.Context, m *utils.MetaDict) context.Context {
+	return context.WithValue(ctx, metadataKey, m)
+}
+func GetMetadata(ctx context.Context) *utils.MetaDict {
+	return ctx.Value(metadataKey).(*utils.MetaDict)
+}

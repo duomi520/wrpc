@@ -1,4 +1,10 @@
-github.com/duomi520/utils v0.0.0-20221006061557-788d1fefd18c h1:MrlkkaRtN0YF5UjQ27Ay+K4NiIt05uHKbbIPl+kuHKs=
-github.com/duomi520/utils v0.0.0-20221006061557-788d1fefd18c/go.mod h1:IV7aimb08+b8HVPLfGBlUOUbOFPJJZXX+/Zvepq4vrs=
+github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+github.com/duomi520/utils v0.0.0-20221015025554-e29120dd7cdc h1:ACaStW+/0Fk+1ycymCMqohaTJ9sl+94Dnw2lqxPTJWU=
+github.com/duomi520/utils v0.0.0-20221015025554-e29120dd7cdc/go.mod h1:IV7aimb08+b8HVPLfGBlUOUbOFPJJZXX+/Zvepq4vrs=
+github.com/duomi520/utils v0.0.0-20221017122812-533bad064a19 h1:Osg6W61OADyCaTQdrZpsZgBiphaVg1i33zLLLTn9Vh0=
+github.com/duomi520/utils v0.0.0-20221017122812-533bad064a19/go.mod h1:IV7aimb08+b8HVPLfGBlUOUbOFPJJZXX+/Zvepq4vrs=
 github.com/panjf2000/ants/v2 v2.5.0 h1:1rWGWSnxCsQBga+nQbA4/iY6VMeNoOIAM0ZWh9u3q2Q=
 github.com/panjf2000/ants/v2 v2.5.0/go.mod h1:cU93usDlihJZ5CfRGNDYsiBYvoilLvBF5Qp/BT2GNRE=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/stretchr/testify v1.7.1 h1:5TQK59W5E3v0r2duFAb7P95B6hEeOyEnHRa8MjYSMTY=
+gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b h1:h8qDotaEPuJATrMmW04NCwg7v22aHH28wwpauUhK9Oo=
