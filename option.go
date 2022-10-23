@@ -16,11 +16,12 @@ type Options struct {
 	snowFlakeID         *utils.SnowFlakeID
 	Marshal             func(any) ([]byte, error)
 	Unmarshal           func([]byte, any) error
+	Hijacker            func([]byte, func([]byte) error) error
 	ProtocolMagicNumber uint32
 	//熔断器
-	Breaker IBreaker
+	//Breaker IBreaker
 	//平衡器
-	Balancer func([]int) int
+	//Balancer func([]int) int
 	//Registry  IRegistry
 	//日志
 	Logger utils.ILogger
@@ -68,8 +69,19 @@ func WithCodec(m func(any) ([]byte, error), um func([]byte, any) error) Option {
 	}
 }
 
-//WithRegistry 服务的注册和发现
+//WithHijacker 劫持者
+//部分option的设置失效，需自行实现，不能阻塞，只能传递[]byte
+func WithHijacker(h func([]byte, func([]byte) error) error) Option {
+	return func(o *Options) {
+		if h == nil {
+			o.Logger.Fatal("Hijacker is nil")
+		}
+		o.Hijacker = h
+	}
+}
+
 /*
+//WithRegistry 服务的注册和发现
 func WithRegistry(ctx context.Context, info NodeInfo, r IRegistry) Option {
 	return func(o *Options) {
 		o.Registry = r
@@ -87,12 +99,12 @@ func WithRegistry(ctx context.Context, info NodeInfo, r IRegistry) Option {
 		}
 	}
 }
-*/
 //WithBreaker 熔断器
 func WithBreaker(b IBreaker) Option {
 	return func(o *Options) {
 		o.Breaker = b
 	}
 }
+*/
 
 // https://mp.weixin.qq.com/s/EvkMQCPwg-B0fZonpwXodg

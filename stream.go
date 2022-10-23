@@ -37,15 +37,24 @@ func (s *Stream) Send(data any) error {
 
 //Recv 非顺序接受数据
 func (s *Stream) Recv() (any, error) {
-	data := <-s.payload
+	var data []byte
+	select {
+	case data = <-s.payload:
+	case <-s.ctx.Done():
+		return nil, s.ctx.Err()
+	}
 	var v any
 	err := s.unmarshal(data, &v)
 	return v, err
 }
 
-//Free 释放
+//release 释放
 func (s *Stream) release() {
 	s.closeOnce.Do(func() {
+		f := make([]byte, 18)
+		copy(f, frameCtxCancelFunc)
+		utils.CopyInteger64(f[6:], s.id)
+		s.send(f)
 		close(s.payload)
 	})
 }

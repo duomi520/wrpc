@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/duomi520/utils"
 	"go/token"
 	"reflect"
+	"strings"
 	"sync"
+
+	"github.com/duomi520/utils"
 )
 
 type connect struct {
@@ -32,16 +34,17 @@ type MethodInfo struct {
 //Service 服务端应答
 type Service struct {
 	Options
-	tcpServer *TCPServer
-	methodMap map[string]MethodInfo
-	topicMap  sync.Map
+	tcpServer      *TCPServer
+	methodMap      map[string]*MethodInfo
+	ctxExitFuncMap sync.Map
+	topicMap       sync.Map
 }
 
-//NewService 新
+//NewService 新建
 func NewService(o *Options) *Service {
 	return &Service{
 		Options:   *o,
-		methodMap: make(map[string]MethodInfo, 256),
+		methodMap: make(map[string]*MethodInfo, 256),
 	}
 }
 
@@ -51,7 +54,7 @@ func (sh *Service) TCPServer(port string) error {
 		return errors.New("TCPServer: 端口号为空")
 
 	}
-	sh.tcpServer = NewTCPServer(port, sh.serveRequest, sh.Logger)
+	sh.tcpServer = NewTCPServer(port, sh.Hijacker, sh.serveRequest, sh.Logger)
 	if sh.tcpServer == nil {
 		return errors.New("TCPServer: 启动TCP服务失败")
 	}
@@ -86,7 +89,6 @@ func (sh *Service) RemoveTopic(name string) {
 }
 
 //RegisterRPC 函数必须是导出的，即首字母为大写
-//函数长时间阻塞会影响后面的传输。
 func (sh *Service) RegisterRPC(target string, rcvr any) error {
 	t := reflect.TypeOf(rcvr)
 	val := reflect.ValueOf(rcvr)
@@ -129,7 +131,7 @@ func (sh *Service) RegisterRPC(target string, rcvr any) error {
 			}
 		}
 		key := target + "." + name
-		sh.methodMap[key] = m
+		sh.methodMap[key] = &m
 	}
 	return nil
 }
@@ -139,7 +141,7 @@ func isExportedOrBuiltinType(t reflect.Type) bool {
 	return token.IsExported(t.Name()) || t.PkgPath() == ""
 }
 
-func (sh *Service) functionCall(key string, meta *utils.MetaDict, payload []byte) (any, error) {
+func (sh *Service) functionCall(id int64, key string, meta *utils.MetaDict, payload []byte) (any, error) {
 	m, ok := sh.methodMap[key]
 	if !ok {
 		return nil, fmt.Errorf("functionCall: can't find service method %s", key)
@@ -150,9 +152,11 @@ func (sh *Service) functionCall(key string, meta *utils.MetaDict, payload []byte
 	}
 	params := make([]reflect.Value, 3)
 	params[0] = m.val
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	sh.ctxExitFuncMap.Store(id, cancel)
+	defer sh.ctxExitFuncMap.Delete(id)
 	if meta != nil {
-		ctx = context.WithValue(context.Background(), metadataKey, meta)
+		ctx = context.WithValue(ctx, metadataKey, meta)
 	}
 	params[1] = reflect.ValueOf(ctx)
 	params[2] = args.Elem()
@@ -172,7 +176,9 @@ func (sh *Service) functionStream(id int64, key string, meta *utils.MetaDict, pa
 		return fmt.Errorf("functionStream: can't find service method %s", key)
 	}
 	if m.stream == nil {
-		m.stream = &Stream{ctx: context.Background(), id: id, serviceMethod: key, send: send, marshal: sh.Marshal, unmarshal: sh.Unmarshal}
+		ctx, cancel := context.WithCancel(context.Background())
+		sh.ctxExitFuncMap.Store(id, cancel)
+		m.stream = &Stream{ctx: ctx, id: id, serviceMethod: key, send: send, marshal: sh.Marshal, unmarshal: sh.Unmarshal}
 		m.stream.payload = make(chan []byte, 16)
 		sh.methodMap[key] = m
 		if meta != nil {
@@ -186,10 +192,13 @@ func (sh *Service) functionStream(id int64, key string, meta *utils.MetaDict, pa
 			function := m.method.Func
 			returnValues := function.Call(params)
 			if err := returnValues[0].Interface(); err != nil {
-				sh.Logger.Error("functionStream: ", err.(error).Error())
+				if !strings.Contains(err.(error).Error(), "context canceled") {
+					sh.Logger.Error("functionStream: ", err.(error).Error())
+				}
 			}
 			m.stream.release()
 			delete(sh.methodMap, key)
+			sh.ctxExitFuncMap.Delete(id)
 		}()
 		return nil
 	}
@@ -211,7 +220,7 @@ func (sh *Service) sendError(f Frame, send func([]byte) error, err error) error 
 }
 
 //serveRequest h
-func (sh *Service) serveRequest(send func([]byte) error, recv []byte) error {
+func (sh *Service) serveRequest(recv []byte, send func([]byte) error) error {
 	var f Frame
 	var n int
 	var err error
@@ -233,18 +242,25 @@ func (sh *Service) serveRequest(send func([]byte) error, recv []byte) error {
 		return nil
 	case utils.StatusStream16:
 		return sh.functionStream(f.Seq, f.ServiceMethod, f.Metadata, recv[n:], send)
+	case utils.StatusCtxCancelFunc16:
+		cancel, ok := sh.ctxExitFuncMap.Load(f.Seq)
+		if ok {
+			cancel.(context.CancelFunc)()
+			sh.ctxExitFuncMap.Delete(f.Seq)
+		}
+		return nil
 	default:
-		f.Payload, err = sh.functionCall(f.ServiceMethod, f.Metadata, recv[n:])
+		f.Payload, err = sh.functionCall(f.Seq, f.ServiceMethod, f.Metadata, recv[n:])
 		if err != nil {
 			return sh.sendError(f, send, err)
 		}
-	}
-	f.Status = utils.StatusResponse16
-	buf := bufferPool.Get().(*buffer)
-	defer bufferPool.Put(buf)
-	err = f.MarshalBinary(sh.Marshal, buf)
-	if err == nil {
-		err = send(buf.bytes())
+		f.Status = utils.StatusResponse16
+		buf := bufferPool.Get().(*buffer)
+		defer bufferPool.Put(buf)
+		err = f.MarshalBinary(sh.Marshal, buf)
+		if err == nil {
+			err = send(buf.bytes())
+		}
 	}
 	return err
 }

@@ -14,11 +14,11 @@ func TestTCPDial(t *testing.T) {
 	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
-	h := func(send func([]byte) error, msg []byte) error { return nil }
-	s := NewTCPServer(":4567", h, logger)
+	h := func([]byte, func([]byte) error) error { return nil }
+	s := NewTCPServer(":4567", nil, h, logger)
 	defer s.Stop()
 	go s.Run()
-	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, h, logger)
+	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, nil, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,14 +43,14 @@ func TestTCPGracefulStop(t *testing.T) {
 	defer StopGuardian()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
-	h := func(send func([]byte) error, msg []byte) error { return nil }
-	s := NewTCPServer(":4568", h, logger)
+	h := func([]byte, func([]byte) error) error { return nil }
+	s := NewTCPServer(":4568", nil, h, logger)
 	go s.Run()
-	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
+	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
+	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +79,15 @@ func TestTCPEcho(t *testing.T) {
 	//50000
 	loop := 50000
 	stop := make(chan struct{})
-	hs := func(send func([]byte) error, msg []byte) error {
+	hs := func(msg []byte, send func([]byte) error) error {
 		data := make([]byte, len(msg))
 		copy(data, msg)
 		send(data)
 		return nil
 	}
-	s := NewTCPServer(":4568", hs, logger)
+	s := NewTCPServer(":4568", nil, hs, logger)
 	go s.Run()
-	hc := func(send func([]byte) error, msg []byte) error {
+	hc := func(msg []byte, send func([]byte) error) error {
 		n := int(utils.BytesToInteger32[uint32](msg[6:10]))
 		num++
 		count += n
@@ -97,7 +97,7 @@ func TestTCPEcho(t *testing.T) {
 		}
 		return nil
 	}
-	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, hc, logger)
+	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, hc, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

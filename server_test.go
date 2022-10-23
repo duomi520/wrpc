@@ -69,7 +69,7 @@ func TestFunctionCall(t *testing.T) {
 	}
 	for index, v := range tests {
 		body, _ := json.Marshal(&v.args)
-		reply, err := r.functionCall(v.key, nil, body)
+		reply, err := r.functionCall(1, v.key, nil, body)
 		if err != nil {
 			if !strings.EqualFold(err.Error(), v.err) {
 				t.Fatalf("%2d | %s | %s \n", index, err.Error(), v.err)
@@ -104,7 +104,7 @@ func TestRPC(t *testing.T) {
 	if err := r.RegisterRPC("计算", arith); err != nil {
 		t.Fatal(err)
 	}
-	s := NewTCPServer(":4567", r.serveRequest, logger)
+	s := NewTCPServer(":4567", nil, r.serveRequest, logger)
 	go s.Run()
 	rc1 := rpcResponseGet()
 	rc2 := rpcResponseGet()

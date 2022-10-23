@@ -26,7 +26,8 @@ type TCPServer struct {
 	tcpListener         *net.TCPListener
 	ProtocolMagicNumber uint32
 	tcpPort             string
-	Handler             func(func([]byte) error, []byte) error
+	Hijacker            func([]byte, func([]byte) error) error
+	Handler             func([]byte, func([]byte) error) error
 	// 1 - stop
 	stop   int32
 	once   sync.Once
@@ -34,8 +35,8 @@ type TCPServer struct {
 }
 
 //NewTCPServer 新建
-func NewTCPServer(port string, h func(func([]byte) error, []byte) error, logger utils.ILogger) *TCPServer {
-	if h == nil {
+func NewTCPServer(port string, hijacker, handler func([]byte, func([]byte) error) error, logger utils.ILogger) *TCPServer {
+	if handler == nil {
 		logger.Fatal("TCP Handler不为nil")
 		return nil
 	}
@@ -54,7 +55,8 @@ func NewTCPServer(port string, h func(func([]byte) error, []byte) error, logger 
 		tcpListener:         listener,
 		ProtocolMagicNumber: defaultProtocolMagicNumber,
 		tcpPort:             port,
-		Handler:             h,
+		Hijacker:            hijacker,
+		Handler:             handler,
 		stop:                0,
 		Logger:              logger,
 	}
@@ -130,6 +132,7 @@ func (s *TCPServer) Run() {
 		conn.SetLinger(10)
 		session := &TCPSession{
 			conn:     conn,
+			Hijacker: s.Hijacker,
 			Handler:  s.Handler,
 			stopSign: &s.stop,
 			Logger:   s.Logger,
@@ -148,8 +151,9 @@ func (s *TCPServer) Run() {
 
 //TCPSession 会话
 type TCPSession struct {
-	conn    *net.TCPConn
-	Handler func(func([]byte) error, []byte) error
+	conn     *net.TCPConn
+	Hijacker func([]byte, func([]byte) error) error
+	Handler  func([]byte, func([]byte) error) error
 	// 1 - stop
 	stopSign *int32
 	Logger   utils.ILogger
@@ -188,8 +192,14 @@ func (ts *TCPSession) tcpClientReceive() {
 			if flag == utils.StatusPong16 {
 				ir += 6
 			} else {
-				if err := ts.Handler(ts.Send, buf[ir:tail]); err != nil {
-					ts.Logger.Error("tcpClientReceive：" + err.Error())
+				if flag == utils.StatusHijacker16 {
+					if err := ts.Hijacker(buf[ir+6:tail], ts.Send); err != nil {
+						ts.Logger.Error("tcpClientReceive：" + err.Error())
+					}
+				} else {
+					if err := ts.Handler(buf[ir:tail], ts.Send); err != nil {
+						ts.Logger.Error("tcpClientReceive：" + err.Error())
+					}
 				}
 				ir = tail
 			}
@@ -226,7 +236,7 @@ func (ts *TCPSession) tcpServerReceive() {
 		if len(unhandled) > 0 {
 			copy(sl.buf[0:], unhandled)
 		}
-		//TODO 动态调整响应时间，提供批量处理速度，减少切换
+		//TODO 动态调整响应时间，增加吞吐，减少切换
 		if err = ts.conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
 			sl.release()
 			goto end
@@ -249,10 +259,7 @@ func (ts *TCPSession) tcpServerReceive() {
 			}
 			flag := utils.BytesToInteger16[uint16](sl.buf[cursor+4 : cursor+6])
 			if flag == utils.StatusGoaway16 {
-				if err := ts.sendWithDeadline(500*time.Millisecond, frameGoaway); err != nil {
-					sl.release()
-					goto end
-				}
+				ts.sendWithDeadline(500*time.Millisecond, frameGoaway)
 				sl.release()
 				goto end
 			}
@@ -265,9 +272,16 @@ func (ts *TCPSession) tcpServerReceive() {
 				}
 				sl.used(6)
 			} else {
-				var tasker task
-				tasker.l, tasker.r, tasker.s, tasker.session = cursor, tail, sl, ts
-				wgo(tasker.do)
+				if flag == utils.StatusHijacker16 {
+					if err := ts.Hijacker(sl.buf[cursor+6:tail], ts.Send); err != nil {
+						ts.Logger.Error("tcpServerReceive" + err.Error())
+					}
+					sl.used(uint64(tail - cursor))
+				} else {
+					var tasker task
+					tasker.l, tasker.r, tasker.s, tasker.session = cursor, tail, sl, ts
+					wgo(tasker.do)
+				}
 				cursor = tail
 			}
 		}
@@ -310,14 +324,14 @@ func (t task) do() {
 			t.session.Logger.Error(fmt.Sprintf("task.do： %s \n%s", err, buf))
 		}
 	}()
-	if err := t.session.Handler(t.session.Send, t.s.buf[t.l:t.r]); err != nil {
-		t.session.Logger.Error("task.do: " + err.Error())
+	if err := t.session.Handler(t.s.buf[t.l:t.r], t.session.Send); err != nil {
+		t.session.Logger.Error("tcpServerReceive->task.do: " + err.Error())
 	}
 	t.s.used(uint64(t.r - t.l))
 }
 
 //TCPDial 连接
-func TCPDial(url string, protocolMagicNumber uint32, h func(func([]byte) error, []byte) error, logger utils.ILogger) (*TCPSession, error) {
+func TCPDial(url string, protocolMagicNumber uint32, hijacker, handler func([]byte, func([]byte) error) error, logger utils.ILogger) (*TCPSession, error) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", url)
 	if err != nil {
 		return nil, errors.New("TCPDial tcpAddr fail: " + err.Error())
@@ -332,7 +346,8 @@ func TCPDial(url string, protocolMagicNumber uint32, h func(func([]byte) error, 
 	var sign int32
 	c := &TCPSession{
 		conn:     conn,
-		Handler:  h,
+		Hijacker: hijacker,
+		Handler:  handler,
 		stopSign: &sign,
 		Logger:   logger,
 	}

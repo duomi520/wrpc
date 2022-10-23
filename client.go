@@ -28,7 +28,7 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := TCPDial(url, o.ProtocolMagicNumber, c.clientHandler, o.Logger)
+	t, err := TCPDial(url, o.ProtocolMagicNumber, o.Hijacker, c.clientHandler, o.Logger)
 	if err != nil {
 		return nil, err
 	}
@@ -41,6 +41,11 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 func (c *Client) Close() {
 	atomic.StoreInt32(c.stopSign, 1)
 	c.send(frameGoaway)
+}
+
+//Send 发送
+func (c *Client) Send(b []byte) error {
+	return c.send(b)
 }
 
 func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, serviceMethod string, args any) error {
@@ -84,7 +89,6 @@ func rpcResponseGet() *rpcResponse {
 func rpcResponsePut(r *rpcResponse) {
 	r.client = nil
 	r.reply = nil
-	close(r.Done)
 	rpcResponsePool.Put(r)
 }
 
@@ -107,9 +111,15 @@ func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any
 	}
 	select {
 	case <-ctx.Done():
+		f := make([]byte, 18)
+		copy(f, frameCtxCancelFunc)
+		utils.CopyInteger64(f[6:], id)
+		c.send(f)
 		return ctx.Err()
 	case <-rc.Done:
 		err = rc.Error
+		//TODO 有泄露风险
+		close(rc.Done)
 		return err
 	}
 }
@@ -117,7 +127,7 @@ func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any
 //TODO Notify模式
 
 /*
-//Go Go异步的调用函数。 待删
+//Go Go异步的调用函数。 待定
 func (c *Client) Go(ctx context.Context, serviceMethod string, args, reply any, done chan struct{}) error {
 	//TODO　ctx.Done 起作用
 	id, err := c.snowFlakeID.NextID()
@@ -165,12 +175,15 @@ func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, 
 	if err != nil {
 		return nil, fmt.Errorf("NewStream: %s", err.Error())
 	}
+	go func() {
+		<-ctx.Done()
+		c.CloseStream(s)
+	}()
 	return s, nil
 }
 
 func (c *Client) CloseStream(s *Stream) {
 	s.release()
-	//TODO 通知服务器stream关闭
 	c.callMap.Delete(s.id)
 }
 
@@ -186,7 +199,7 @@ func (c *Client) Unsubscribe(topic string) error {
 	return c.sendFrame(context.TODO(), utils.StatusUnsubscribe16, c.Id, topic, nil)
 }
 
-func (c *Client) clientHandler(send func([]byte) error, recv []byte) error {
+func (c *Client) clientHandler(recv []byte, send func([]byte) error) error {
 	var f Frame
 	var n int
 	var err error

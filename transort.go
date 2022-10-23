@@ -24,5 +24,9 @@ func MetadataContext(ctx context.Context, m *utils.MetaDict) context.Context {
 	return context.WithValue(ctx, metadataKey, m)
 }
 func GetMetadata(ctx context.Context) *utils.MetaDict {
-	return ctx.Value(metadataKey).(*utils.MetaDict)
+	v := ctx.Value(metadataKey)
+	if v == nil {
+		return nil
+	}
+	return v.(*utils.MetaDict)
 }

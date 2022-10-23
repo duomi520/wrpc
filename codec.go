@@ -8,18 +8,23 @@ import (
 //ErrInsufficientLength 定义错误
 var ErrInsufficientLength = errors.New("utils.Frame|bytes is too short")
 
-var framePing, framePong, frameGoaway []byte
+var framePing, framePong, frameGoaway, frameCtxCancelFunc []byte
 
 func init() {
 	framePing = make([]byte, 6)
 	framePong = make([]byte, 6)
 	frameGoaway = make([]byte, 6)
+	frameCtxCancelFunc = make([]byte, 18)
 	utils.CopyInteger32(framePing[0:4], uint32(6))
 	utils.CopyInteger32(framePong[0:4], uint32(6))
 	utils.CopyInteger32(frameGoaway[0:4], uint32(6))
+	utils.CopyInteger32(frameCtxCancelFunc[0:4], uint32(18))
 	utils.CopyInteger16(framePing[4:6], utils.StatusPing16)
 	utils.CopyInteger16(framePong[4:6], utils.StatusPong16)
 	utils.CopyInteger16(frameGoaway[4:6], utils.StatusGoaway16)
+	utils.CopyInteger16(frameCtxCancelFunc[4:6], utils.StatusCtxCancelFunc16)
+	utils.CopyInteger16(frameCtxCancelFunc[14:16], uint16(18))
+	utils.CopyInteger16(frameCtxCancelFunc[16:18], uint16(18))
 }
 
 /*
@@ -39,7 +44,7 @@ func init() {
 */
 
 //FrameMinLenght 长度
-const FrameMinLenght int = 14
+const FrameMinLenght int = 18
 
 //Frame 帧
 type Frame struct {
@@ -119,6 +124,21 @@ func GetStatus(data []byte) uint16 {
 		return utils.StatusUnknown16
 	}
 	return utils.BytesToInteger16[uint16](data[4:6])
+}
+
+/*
++-------+-------+-------+-------+-------+-------+
+|           Lenght(32)          |   Status(16)  |
++-------+-------+-------+-------+-------+-------+-------+-------+
+|                       Payload (0...)                         ...
++-------+-------+-------+-------+-------+-------+-------+-------+
+*/
+
+//发送的[]byte前部需留 6 的空间
+func HijackerSend(data []byte, send func([]byte) error) error {
+	utils.CopyInteger32(data[0:4], uint32(len(data)))
+	utils.CopyInteger16(data[4:6], utils.StatusHijacker16)
+	return send(data)
 }
 
 // https://www.jianshu.com/p/e57ca4fec26f  HTTP2 详解

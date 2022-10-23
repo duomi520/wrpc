@@ -52,7 +52,7 @@ func (s *slot) release() {
 }
 
 //defaultBufferPoolLenght 长度
-var defaultBufferPoolLenght = 256
+var defaultBufferPoolLenght = 512
 
 //bufferPool 池
 var bufferPool = sync.Pool{
