@@ -2,6 +2,7 @@ package wrpc
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"strconv"
 	"time"
@@ -14,7 +15,7 @@ var snowFlakeStartupTime int64 = time.Date(2022, time.June, 1, 0, 0, 0, 0, time.
 //Options 配置
 type Options struct {
 	snowFlakeID         *utils.SnowFlakeID
-	Marshal             func(any) ([]byte, error)
+	Marshal             func(any, io.Writer) error
 	Unmarshal           func([]byte, any) error
 	Hijacker            func([]byte, func([]byte) error) error
 	ProtocolMagicNumber uint32
@@ -36,7 +37,7 @@ func NewOptions(opts ...Option) *Options {
 	//设置默认值
 	o.snowFlakeID = utils.NewSnowFlakeID(0, snowFlakeStartupTime)
 	o.Logger, _ = utils.NewWLogger(utils.FatalLevel, "")
-	o.Marshal = json.Marshal
+	o.Marshal = jsonMarshal
 	o.Unmarshal = json.Unmarshal
 	o.ProtocolMagicNumber = defaultProtocolMagicNumber
 	for _, v := range opts {
@@ -59,8 +60,12 @@ func WithLogger(l utils.ILogger) Option {
 	}
 }
 
+func jsonMarshal(o any, w io.Writer) error {
+	return json.NewEncoder(w).Encode(o)
+}
+
 //WithCodec 编码
-func WithCodec(m func(any) ([]byte, error), um func([]byte, any) error) Option {
+func WithCodec(m func(any, io.Writer) error, um func([]byte, any) error) Option {
 	return func(o *Options) {
 		if m != nil && um != nil {
 			o.Marshal = m

@@ -1,7 +1,6 @@
 package wrpc
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -74,10 +73,6 @@ func (b *buffer) setValid(v int) {
 	b.valid = v
 }
 
-func (b *buffer) cap() int {
-	return len(b.buf)
-}
-
 //getbuf 取得底层[]byte
 func (b *buffer) getbuf() []byte {
 	return b.buf
@@ -91,17 +86,12 @@ func (b *buffer) bytes() []byte {
 	return b.buf[:b.valid]
 }
 
-//grow 扩大底层[]byte
-func (b *buffer) grow(n int) {
-	base := make([]byte, len(b.buf)+n)
-	copy(base, b.buf)
-	b.buf = base
-}
-
 //Write 实现write接口
 func (b *buffer) Write(p []byte) (n int, err error) {
 	if len(p) > (len(b.buf) - b.valid) {
-		return 0, errors.New("超出buffer的底层[]byte的长度")
+		base := make([]byte, len(b.buf)+len(b.buf)+len(p))
+		copy(base, b.buf)
+		b.buf = base
 	}
 	copy(b.buf[b.valid:], p)
 	b.valid += len(p)

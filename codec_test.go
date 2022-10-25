@@ -18,7 +18,7 @@ func TestFrame(t *testing.T) {
 	buf := bufferPool.Get().(*buffer)
 	defer bufferPool.Put(buf)
 	for i := range tests {
-		err := tests[i].MarshalBinary(json.Marshal, buf)
+		err := tests[i].MarshalBinary(jsonMarshal, buf)
 		if err != nil {
 			t.Fatal(err.Error())
 		}

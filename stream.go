@@ -3,8 +3,10 @@ package wrpc
 import (
 	"context"
 	"fmt"
-	"github.com/duomi520/utils"
+	"io"
 	"sync"
+
+	"github.com/duomi520/utils"
 )
 
 //Stream 流
@@ -12,7 +14,7 @@ type Stream struct {
 	ctx           context.Context
 	id            int64
 	serviceMethod string
-	marshal       func(any) ([]byte, error)
+	marshal       func(any, io.Writer) error
 	unmarshal     func([]byte, any) error
 	send          func([]byte) error
 	payload       chan []byte

@@ -2,6 +2,8 @@ package wrpc
 
 import (
 	"errors"
+	"io"
+
 	"github.com/duomi520/utils"
 )
 
@@ -56,15 +58,10 @@ type Frame struct {
 }
 
 //MarshalBinary 编码
-func (f Frame) MarshalBinary(marshal func(any) ([]byte, error), buf *buffer) error {
+func (f Frame) MarshalBinary(marshal func(any, io.Writer) error, buf *buffer) error {
 	buf.reset()
 	d := buf.getbuf()
 	lenght := 0
-	//编码Payload
-	data, err := marshal(f.Payload)
-	if err != nil {
-		return err
-	}
 	ServiceMethodEnd := 18 + uint16(len(f.ServiceMethod))
 	MetadataEnd := ServiceMethodEnd
 	//编码Metadata
@@ -72,21 +69,24 @@ func (f Frame) MarshalBinary(marshal func(any) ([]byte, error), buf *buffer) err
 		var n int
 		var e error
 		n, e = f.Metadata.Encode(d[ServiceMethodEnd:])
-		for e != nil {
-			buf.grow(buf.cap())
-			n, e = f.Metadata.Encode(d[ServiceMethodEnd:])
+		if e != nil {
+			n, _ = f.Metadata.Encode(d[ServiceMethodEnd:])
 		}
 		MetadataEnd += uint16(n)
 	}
-	lenght = int(MetadataEnd) + len(data)
 	utils.CopyInteger32(d[0:4], uint32(lenght))
 	utils.CopyInteger16(d[4:6], f.Status)
 	utils.CopyInteger64(d[6:14], f.Seq)
 	utils.CopyInteger16(d[14:16], ServiceMethodEnd)
 	utils.CopyInteger16(d[16:18], MetadataEnd)
 	copy(d[18:ServiceMethodEnd], utils.StringToBytes(f.ServiceMethod))
-	copy(d[MetadataEnd:], data)
-	buf.setValid(lenght)
+	//编码Payload
+	buf.setValid(int(MetadataEnd))
+	err := marshal(f.Payload, buf)
+	if err != nil {
+		return err
+	}
+	utils.CopyInteger32(d[0:4], uint32(buf.valid))
 	return nil
 }
 

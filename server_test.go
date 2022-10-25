@@ -132,19 +132,19 @@ func TestRPC(t *testing.T) {
 	f1 := Frame{utils.StatusRequest16, 1, "计算.Multiply", nil, Args{7, 8}}
 	buf := bufferPool.Get().(*buffer)
 	defer bufferPool.Put(buf)
-	f1.MarshalBinary(json.Marshal, buf)
+	f1.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
 	f2 := Frame{utils.StatusRequest16, 2, "计算.Divide", nil, Args{7, 8}}
 	buf.reset()
-	f2.MarshalBinary(json.Marshal, buf)
+	f2.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
 	f3 := Frame{utils.StatusRequest16, 3, "计算.Divide", nil, Args{9, 0}}
 	buf.reset()
-	f3.MarshalBinary(json.Marshal, buf)
+	f3.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
