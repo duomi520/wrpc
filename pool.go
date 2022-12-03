@@ -36,7 +36,7 @@ func (s *slot) setLen(n uint64) {
 func (s *slot) used(n uint64) {
 	new := atomic.AddUint64(&s.usedLenght, n)
 	if new > s.lenght {
-		panic(fmt.Sprintf("slot.buf 使用字节累计超原始字节 %d %d \n", int(new), int(s.lenght)))
+		panic(fmt.Sprintf("slot.used：使用 %d 字节累加后 %d 超原始slot长度 %d \n", n, new, s.lenght))
 	}
 	if new == s.lenght {
 		s.release()

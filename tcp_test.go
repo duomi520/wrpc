@@ -10,11 +10,11 @@ import (
 )
 
 func TestTCPDial(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
-	h := func([]byte, func([]byte) error) error { return nil }
+	h := func([]byte, WriterFunc, func()) error { return nil }
 	s := NewTCPServer(":4567", nil, h, logger)
 	defer s.Stop()
 	go s.Run()
@@ -29,21 +29,21 @@ func TestTCPDial(t *testing.T) {
 }
 
 /*
-[Debug] 2022-10-17 20:37:57 TCP监听端口:4567
-[Debug] 2022-10-17 20:37:57 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-17 20:37:57 127.0.0.1:4567 tcpClientReceive stop
-[Debug] 2022-10-17 20:37:57 127.0.0.1:56682 tcpServerReceive stop
-[Debug] 2022-10-17 20:37:58 TCP等待子协程关闭……
-[Debug] 2022-10-17 20:37:58 TCPServer关闭。
-[Debug] 2022-10-17 20:37:58 TCP监听端口关闭。
+[Debug] 2022-12-03 22:02:27 TCPServer.Run：TCP监听端口:4567
+[Debug] 2022-12-03 22:02:27 TCPServer.Run：TCP已初始化连接，等待客户端连接……
+[Debug] 2022-12-03 22:02:27 TCPSession.tcpClientReceive: 127.0.0.1:4567 stop
+[Debug] 2022-12-03 22:02:27 TCPSession.tcpServerReceive: 127.0.0.1:61018 stop
+[Debug] 2022-12-03 22:02:28 TCPServer.Run: TCP等待子协程关闭……
+[Debug] 2022-12-03 22:02:28 TCPServer.Run: TCPServer关闭。
+[Debug] 2022-12-03 22:02:28 TCPServer.Stop：TCP监听端口关闭。
 */
 
 func TestTCPGracefulStop(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
-	h := func([]byte, func([]byte) error) error { return nil }
+	h := func([]byte, WriterFunc, func()) error { return nil }
 	s := NewTCPServer(":4568", nil, h, logger)
 	go s.Run()
 	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, h, logger)
@@ -60,26 +60,26 @@ func TestTCPGracefulStop(t *testing.T) {
 }
 
 /*
-[Debug] 2022-10-17 20:40:10 TCP监听端口:4568
-[Debug] 2022-10-17 20:40:10 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-17 20:40:10 TCP监听端口关闭。
-[Debug] 2022-10-17 20:40:10 TCP等待子协程关闭……
-[Debug] 2022-10-17 20:40:15 127.0.0.1:57259 tcpServerReceive stop
-[Debug] 2022-10-17 20:40:15 127.0.0.1:4568 tcpClientReceive stop
-[Debug] 2022-10-17 20:40:15 127.0.0.1:4568 tcpClientReceive stop
-[Debug] 2022-10-17 20:40:15 127.0.0.1:57258 tcpServerReceive stop
-[Debug] 2022-10-17 20:40:15 TCPServer关闭。
+[Debug] 2022-12-03 22:02:47 TCPServer.Run：TCP监听端口:4568
+[Debug] 2022-12-03 22:02:47 TCPServer.Run：TCP已初始化连接，等待客户端连接……
+[Debug] 2022-12-03 22:02:48 TCPServer.Stop：TCP监听端口关闭。
+[Debug] 2022-12-03 22:02:48 TCPServer.Run: TCP等待子协程关闭……
+[Debug] 2022-12-03 22:02:52 TCPSession.tcpClientReceive: 127.0.0.1:4568 stop
+[Debug] 2022-12-03 22:02:52 TCPSession.tcpServerReceive: 127.0.0.1:61024 stop
+[Debug] 2022-12-03 22:02:53 TCPSession.tcpServerReceive: 127.0.0.1:61025 stop
+[Debug] 2022-12-03 22:02:53 TCPSession.tcpClientReceive: 127.0.0.1:4568 stop
+[Debug] 2022-12-03 22:02:53 TCPServer.Run: TCPServer关闭。
 */
 func TestTCPEcho(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	var num, count int
 	//50000
 	loop := 50000
 	stop := make(chan struct{})
-	hs := func(msg []byte, send func([]byte) error) error {
+	hs := func(msg []byte, send WriterFunc, f func()) error {
 		data := make([]byte, len(msg))
 		copy(data, msg)
 		send(data)
@@ -87,7 +87,7 @@ func TestTCPEcho(t *testing.T) {
 	}
 	s := NewTCPServer(":4568", nil, hs, logger)
 	go s.Run()
-	hc := func(msg []byte, send func([]byte) error) error {
+	hc := func(msg []byte, send WriterFunc, f func()) error {
 		n := int(utils.BytesToInteger32[uint32](msg[6:10]))
 		num++
 		count += n
@@ -120,13 +120,13 @@ func TestTCPEcho(t *testing.T) {
 }
 
 /*
-[Debug] 2022-10-17 20:52:13 TCP监听端口:4568
-[Debug] 2022-10-17 20:52:13 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-17 20:52:13 TCP等待子协程关闭……
-[Debug] 2022-10-17 20:52:13 TCP监听端口关闭。
-[Debug] 2022-10-17 20:52:18 127.0.0.1:4568 tcpPing stop
-[Debug] 2022-10-17 20:52:18 127.0.0.1:4568 tcpClientReceive stop
-[Debug] 2022-10-17 20:52:18 127.0.0.1:60070 tcpServerReceive stop
-[Debug] 2022-10-17 20:52:18 TCPServer关闭。
-[Debug] 2022-10-17 20:52:19 1249975000 = 1249975000
+[Debug] 2022-12-03 22:03:03 TCPServer.Run：TCP监听端口:4568
+[Debug] 2022-12-03 22:03:03 TCPServer.Run：TCP已初始化连接，等待客户端连接……
+[Debug] 2022-12-03 22:03:04 TCPServer.Run: TCP等待子协程关闭……
+[Debug] 2022-12-03 22:03:04 TCPServer.Stop：TCP监听端口关闭。
+[Debug] 2022-12-03 22:03:08 TCPSession.tcpPing: 127.0.0.1:4568 stop
+[Debug] 2022-12-03 22:03:08 TCPSession.tcpClientReceive: 127.0.0.1:4568 stop
+[Debug] 2022-12-03 22:03:08 TCPSession.tcpServerReceive: 127.0.0.1:61029 stop
+[Debug] 2022-12-03 22:03:08 TCPServer.Run: TCPServer关闭。
+[Debug] 2022-12-03 22:03:09 1249975000 = 1249975000
 */

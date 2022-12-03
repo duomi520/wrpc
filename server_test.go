@@ -69,7 +69,8 @@ func TestFunctionCall(t *testing.T) {
 	}
 	for index, v := range tests {
 		body, _ := json.Marshal(&v.args)
-		reply, err := r.functionCall(1, v.key, nil, body)
+		m := r.methodMap[v.key]
+		reply, err := r.functionCall(1, m, nil, body)
 		if err != nil {
 			if !strings.EqualFold(err.Error(), v.err) {
 				t.Fatalf("%2d | %s | %s \n", index, err.Error(), v.err)
@@ -86,16 +87,16 @@ func TestFunctionCall(t *testing.T) {
 }
 
 /*
-2022/01/26 18:52:54  0 | 106 = 106 |
-2022/01/26 18:52:54  1 | [8 10 12 14 16] = [8 10 12 14 16] |
-2022/01/26 18:52:54  2 | 56 = 56 |
-2022/01/26 18:52:54  3 | {0 7} = {0 7} |
-2022/01/26 18:52:54  4 | <nil> = {0 0} | divide by zero
+2022/12/03 21:59:01  0 | 106 = 106 |
+2022/12/03 21:59:01  1 | [8 10 12 14 16] = [8 10 12 14 16] |
+2022/12/03 21:59:01  2 | 56 = 56 |
+2022/12/03 21:59:01  3 | {0 7} = {0 7} |
+2022/12/03 21:59:01  4 | <nil> = {0 0} | divide by zero
 */
 
 func TestRPC(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	o := NewOptions(WithLogger(logger))
@@ -114,7 +115,7 @@ func TestRPC(t *testing.T) {
 		rpcResponsePut(rc2)
 		rpcResponsePut(rc3)
 	}()
-	c, err := NewTCPClient("127.0.0.1:4567", o)
+	c, err := NewTCPClient("127.0.0.1:4567", NewOptions(WithLogger(logger)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,13 +170,75 @@ func TestRPC(t *testing.T) {
 }
 
 /*
-[Info ] 2022-10-17 20:54:59 Pid: 82252
-[Debug] 2022-10-17 20:54:59 TCP监听端口:4567
-[Debug] 2022-10-17 20:54:59 TCP已初始化连接，等待客户端连接……
+[Debug] 2022-12-03 21:58:35 TCPServer.Run：TCP监听端口:4567
+[Debug] 2022-12-03 21:58:35 TCPServer.Run：TCP已初始化连接，等待客户端连接……
 56 {0 7} divide by zero
-[Debug] 2022-10-17 20:54:59 TCP监听端口关闭。
-[Debug] 2022-10-17 20:54:59 TCP等待子协程关闭……
-[Debug] 2022-10-17 20:55:04 127.0.0.1:60876 tcpServerReceive stop
-[Debug] 2022-10-17 20:55:04 TCPServer关闭。
-[Debug] 2022-10-17 20:55:04 127.0.0.1:4567 tcpClientReceive stop
+[Debug] 2022-12-03 21:58:35 TCPServer.Stop：TCP监听端口关闭。
+[Debug] 2022-12-03 21:58:35 TCPServer.Run: TCP等待子协程关闭……
+[Debug] 2022-12-03 21:58:40 TCPSession.tcpServerReceive: 127.0.0.1:60904 stop
+[Debug] 2022-12-03 21:58:40 TCPServer.Run: TCPServer关闭。
+[Debug] 2022-12-03 21:58:40 TCPSession.tcpClientReceive: 127.0.0.1:4567 stop
+*/
+func TestServerHook(t *testing.T) {
+	Default()
+	defer Stop()
+	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
+	defer logger.Close()
+	o := NewOptions(WithLogger(logger))
+	intelA := func(b []byte, w WriterFunc) ([]byte, error) {
+		fmt.Println("A", b)
+		return b, nil
+	}
+	intelB := func(b []byte, w WriterFunc) ([]byte, error) {
+		fmt.Println("B", b)
+		return b, nil
+	}
+	outlet := func(b []byte, w WriterFunc) ([]byte, error) {
+		fmt.Println("O", b)
+		return b, nil
+	}
+	o.IntletHook = append(o.IntletHook, intelA, intelB)
+	o.OutletHook = append(o.OutletHook, outlet)
+	r := NewService(o)
+	arith := new(Arith)
+	if err := r.RegisterRPC("计算", arith); err != nil {
+		t.Fatal(err)
+	}
+	s := NewTCPServer(":4567", nil, r.serveRequest, logger)
+	go s.Run()
+	c, err := NewTCPClient("127.0.0.1:4567", NewOptions(WithLogger(logger)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	rc := rpcResponseGet()
+	defer rpcResponsePut(rc)
+	var reply int
+	rc.reply = &reply
+	c.callMap.Store(int64(1), rc)
+	buf := bufferPool.Get().(*buffer)
+	defer bufferPool.Put(buf)
+	f := Frame{utils.StatusRequest16, 1, "计算.Add100", nil, 6}
+	f.MarshalBinary(jsonMarshal, buf)
+	if err := c.send(buf.bytes()); err != nil {
+		t.Fatal(err)
+	}
+	<-rc.Done
+	fmt.Println(rc, reply)
+	s.Stop()
+	time.Sleep(5 * time.Second)
+}
+
+/*
+[Debug] 2022-12-03 21:59:13 TCPServer.Run：TCP监听端口:4567
+[Debug] 2022-12-03 21:59:13 TCPServer.Run：TCP已初始化连接，等待客户端连接……
+A [33 0 0 0 16 0 1 0 0 0 0 0 0 0 31 0 31 0 232 174 161 231 174 151 46 65 100 100 49 48 48 54 10]
+B [33 0 0 0 16 0 1 0 0 0 0 0 0 0 31 0 31 0 232 174 161 231 174 151 46 65 100 100 49 48 48 54 10]
+O [35 0 0 0 17 0 1 0 0 0 0 0 0 0 31 0 31 0 232 174 161 231 174 151 46 65 100 100 49 48 48 49 48 54 10]
+&{0 <nil> 0xc00009e4e8 0xc0000863c0 <nil>} 106
+[Debug] 2022-12-03 21:59:13 TCPServer.Run: TCP等待子协程关闭……
+[Debug] 2022-12-03 21:59:13 TCPServer.Stop：TCP监听端口关闭。
+[Debug] 2022-12-03 21:59:18 TCPSession.tcpClientReceive: 127.0.0.1:4567 stop
+[Debug] 2022-12-03 21:59:18 TCPSession.tcpServerReceive: 127.0.0.1:60924 stop
+[Debug] 2022-12-03 21:59:18 TCPServer.Run: TCPServer关闭。
 */

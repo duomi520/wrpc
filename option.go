@@ -3,22 +3,29 @@ package wrpc
 import (
 	"encoding/json"
 	"io"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/duomi520/utils"
 )
 
-var snowFlakeStartupTime int64 = time.Date(2022, time.June, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+var SnowFlakeStartupTime int64 = time.Date(2023, time.January, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+
+type WriterFunc func([]byte) error
 
 //Options 配置
 type Options struct {
-	snowFlakeID         *utils.SnowFlakeID
-	Marshal             func(any, io.Writer) error
-	Unmarshal           func([]byte, any) error
-	Hijacker            func([]byte, func([]byte) error) error
 	ProtocolMagicNumber uint32
+	snowFlakeID         *utils.SnowFlakeID
+	//编码器
+	Marshal func(any, io.Writer) error
+	//解码器
+	Unmarshal func([]byte, any) error
+	//劫持者
+	Hijacker func([]byte, WriterFunc) error
+	//入口拦截器
+	IntletHook []func([]byte, WriterFunc) ([]byte, error)
+	//出口拦截器
+	OutletHook []func([]byte, WriterFunc) ([]byte, error)
 	//熔断器
 	//Breaker IBreaker
 	//平衡器
@@ -35,11 +42,11 @@ type Option func(*Options)
 func NewOptions(opts ...Option) *Options {
 	o := Options{}
 	//设置默认值
-	o.snowFlakeID = utils.NewSnowFlakeID(0, snowFlakeStartupTime)
+	o.ProtocolMagicNumber = defaultProtocolMagicNumber
+	o.snowFlakeID = utils.NewSnowFlakeID(0, SnowFlakeStartupTime)
 	o.Logger, _ = utils.NewWLogger(utils.FatalLevel, "")
 	o.Marshal = jsonMarshal
 	o.Unmarshal = json.Unmarshal
-	o.ProtocolMagicNumber = defaultProtocolMagicNumber
 	for _, v := range opts {
 		v(&o)
 	}
@@ -55,7 +62,6 @@ func WithProtocolMagicNumber(pm uint32) Option {
 //WithLogger 日志
 func WithLogger(l utils.ILogger) Option {
 	return func(o *Options) {
-		l.Info("Pid: ", strconv.Itoa(os.Getpid()))
 		o.Logger = l
 	}
 }
@@ -76,12 +82,32 @@ func WithCodec(m func(any, io.Writer) error, um func([]byte, any) error) Option 
 
 //WithHijacker 劫持者
 //部分option的设置失效，需自行实现，不能阻塞，只能传递[]byte
-func WithHijacker(h func([]byte, func([]byte) error) error) Option {
+func WithHijacker(h func([]byte, WriterFunc) error) Option {
 	return func(o *Options) {
 		if h == nil {
-			o.Logger.Fatal("Hijacker is nil")
+			o.Logger.Fatal("WithHijacker：Hijacker is nil")
 		}
 		o.Hijacker = h
+	}
+}
+
+//WithIntletHook 入口拦截器
+func WithIntletHook(chain []func([]byte, WriterFunc) ([]byte, error)) Option {
+	return func(o *Options) {
+		if len(chain) == 0 {
+			o.Logger.Fatal("WithIntletHook：IntletHook is nil")
+		}
+		o.IntletHook = chain
+	}
+}
+
+//WithOutletHook 出口拦截器
+func WithOutletHook(chain []func([]byte, WriterFunc) ([]byte, error)) Option {
+	return func(o *Options) {
+		if len(chain) == 0 {
+			o.Logger.Fatal("WithOutletHook：OutletHook is nil")
+		}
+		o.OutletHook = chain
 	}
 }
 

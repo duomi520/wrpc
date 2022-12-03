@@ -8,10 +8,10 @@ import (
 type Topic struct {
 	*Service
 	Name         string
-	audienceList *utils.LockList
+	audienceList *utils.CopyOnWriteList
 }
 
-func (t *Topic) add(id int64, s func([]byte) error) {
+func (t *Topic) add(id int64, s WriterFunc) {
 	t.audienceList.Add(connect{Id: id, send: s})
 }
 func (t *Topic) remove(id int64) {

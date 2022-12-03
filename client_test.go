@@ -3,6 +3,7 @@ package wrpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"testing"
@@ -34,8 +35,8 @@ func (hi *hi) CancelFunc(ctx context.Context, args string) (string, error) {
 }
 
 func TestClientCall(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	o := NewOptions()
 	s := NewService(o)
 	s.TCPServer(":4567")
@@ -72,8 +73,8 @@ func TestClientCall(t *testing.T) {
 2022/10/18 20:41:30 [charset content http-equiv] [utf-8 webkit X-UA-Compatible]
 */
 func TestCtxCancelFunc(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	o := NewOptions()
 	s := NewService(o)
 	s.TCPServer(":4567")
@@ -130,8 +131,8 @@ func TestClientGo(t *testing.T) {
 }
 */
 func TestClientClose(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	o := NewOptions(WithLogger(logger))
 	s := NewService(o)
@@ -149,25 +150,24 @@ func TestClientClose(t *testing.T) {
 }
 
 /*
-[Info ] 2022-10-17 20:58:46 Pid: 90012
-[Debug] 2022-10-17 20:58:46 TCP监听端口:4567
-[Debug] 2022-10-17 20:58:46 TCP已初始化连接，等待客户端连接……
-[Debug] 2022-10-17 20:58:46 127.0.0.1:4567 tcpClientReceive stop
-[Debug] 2022-10-17 20:58:46 127.0.0.1:61949 tcpServerReceive stop
-[Debug] 2022-10-17 20:58:47 TCP等待子协程关闭……
-[Debug] 2022-10-17 20:58:47 TCPServer关闭。
-[Debug] 2022-10-17 20:58:47 TCP监听端口关闭。
-[Debug] 2022-10-17 20:58:51 127.0.0.1:4567 tcpPing stop
+[Debug] 2022-12-03 22:00:08 TCPServer.Run：TCP监听端口:4567
+[Debug] 2022-12-03 22:00:08 TCPServer.Run：TCP已初始化连接，等待客户端连接……
+[Debug] 2022-12-03 22:00:08 TCPSession.tcpClientReceive: 127.0.0.1:4567 stop
+[Debug] 2022-12-03 22:00:08 TCPSession.tcpServerReceive: 127.0.0.1:60960 stop
+[Debug] 2022-12-03 22:00:08 TCPServer.Stop：TCP监听端口关闭。
+[Debug] 2022-12-03 22:00:08 TCPServer.Run: TCP等待子协程关闭……
+[Debug] 2022-12-03 22:00:08 TCPServer.Run: TCPServer关闭。
+[Debug] 2022-12-03 22:00:13 TCPSession.tcpPing: 127.0.0.1:4567 stop
 */
 func TestHijacker(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
-	oc := NewOptions(WithHijacker(func(data []byte, send func([]byte) error) error {
+	Default()
+	defer Stop()
+	oc := NewOptions(WithHijacker(func(data []byte, send WriterFunc) error {
 		log.Print("Client: ", string(data))
 		return nil
 	}))
-	os := NewOptions(WithHijacker(func(data []byte, send func([]byte) error) error {
-		log.Print("server: ", string(data))
+	os := NewOptions(WithHijacker(func(data []byte, send WriterFunc) error {
+		log.Print("Server: ", string(data))
 		HijackerSend([]byte("123456收到"), send)
 		return nil
 	}))
@@ -186,8 +186,46 @@ func TestHijacker(t *testing.T) {
 }
 
 /*
-2022/10/22 09:57:12 server: hi
-2022/10/22 09:57:12 server: jackey
-2022/10/22 09:57:12 Client: 收到
-2022/10/22 09:57:12 Client: 收到
+2022/12/03 22:00:37 Server: hi
+2022/12/03 22:00:37 Server: jackey
+2022/12/03 22:00:37 Client: 收到
+2022/12/03 22:00:37 Client: 收到
+*/
+func TestClientHook(t *testing.T) {
+	Default()
+	defer Stop()
+	s := NewService(NewOptions())
+	s.TCPServer(":4567")
+	defer s.Stop()
+	hi := new(hi)
+	s.RegisterRPC("hi", hi)
+	o := NewOptions()
+	intelA := func(b []byte, w WriterFunc) ([]byte, error) {
+		fmt.Println("A", b)
+		return b, nil
+	}
+	intelB := func(b []byte, w WriterFunc) ([]byte, error) {
+		fmt.Println("B", b)
+		return b, nil
+	}
+	outlet := func(b []byte, w WriterFunc) ([]byte, error) {
+		fmt.Println("O", b)
+		return b, nil
+	}
+	o.IntletHook = append(o.IntletHook, intelA, intelB)
+	o.OutletHook = append(o.OutletHook, outlet)
+	client, err := NewTCPClient("127.0.0.1:4567", o)
+	if err != nil {
+		t.Fatal(err.Error())
+	}
+	var reply string
+	if err := client.Call(context.TODO(), "hi.SayHello", "linda", &reply); err != nil {
+		t.Fatal(err.Error())
+	}
+}
+
+/*
+O [37 0 0 0 16 0 0 0 128 194 89 106 219 255 29 0 29 0 104 105 46 83 97 121 72 101 108 108 111 34 108 105 110 100 97 34 10]
+A [43 0 0 0 17 0 0 0 128 194 89 106 219 255 29 0 29 0 104 105 46 83 97 121 72 101 108 108 111 34 72 101 108 108 111 32 108 105 110 100 97 34 10]
+B [43 0 0 0 17 0 0 0 128 194 89 106 219 255 29 0 29 0 104 105 46 83 97 121 72 101 108 108 111 34 72 101 108 108 111 32 108 105 110 100 97 34 10]
 */

@@ -16,7 +16,7 @@ type Stream struct {
 	serviceMethod string
 	marshal       func(any, io.Writer) error
 	unmarshal     func([]byte, any) error
-	send          func([]byte) error
+	send          WriterFunc
 	payload       chan []byte
 	closeOnce     sync.Once
 }
@@ -31,7 +31,7 @@ func (s *Stream) Send(data any) error {
 	defer bufferPool.Put(buf)
 	err := f.MarshalBinary(s.marshal, buf)
 	if err != nil {
-		return fmt.Errorf("marshal fail %s", err.Error())
+		return fmt.Errorf("Stream.Send：marshal fail %s", err.Error())
 	}
 	err = s.send(buf.bytes())
 	return err

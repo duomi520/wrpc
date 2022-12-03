@@ -15,10 +15,11 @@ type Client struct {
 	Options
 	callMap sync.Map
 	connect
+	warpSend WriterFunc
 	stopSign *int32
 }
 
-//NewTCPClient 新
+//NewTCPClient 新建
 func NewTCPClient(url string, o *Options) (*Client, error) {
 	c := &Client{
 		Options: *o,
@@ -33,6 +34,14 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 		return nil, err
 	}
 	c.send = t.Send
+	c.warpSend = func(b []byte) error {
+		for v := range o.OutletHook {
+			if b, err = o.OutletHook[v](b, t.Send); err != nil {
+				return err
+			}
+		}
+		return t.Send(b)
+	}
 	c.stopSign = t.stopSign
 	return c, nil
 }
@@ -45,7 +54,7 @@ func (c *Client) Close() {
 
 //Send 发送
 func (c *Client) Send(b []byte) error {
-	return c.send(b)
+	return c.warpSend(b)
 }
 
 func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, serviceMethod string, args any) error {
@@ -59,7 +68,7 @@ func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, servic
 	if err != nil {
 		return err
 	}
-	err = c.send(buf.bytes())
+	err = c.warpSend(buf.bytes())
 	return err
 }
 
@@ -150,7 +159,7 @@ func (c *Client) Go(ctx context.Context, serviceMethod string, args, reply any, 
 func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, error) {
 	id, err := c.snowFlakeID.NextID()
 	if err != nil {
-		return nil, fmt.Errorf("NewStream: snowFlake id fail %s", err.Error())
+		return nil, fmt.Errorf("Client.NewStream: snowFlake id fail %s", err.Error())
 	}
 	s := &Stream{ctx: ctx, id: id, serviceMethod: serviceMethod, marshal: c.Marshal, unmarshal: c.Unmarshal, send: c.send}
 	s.payload = make(chan []byte, 16)
@@ -169,11 +178,11 @@ func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, 
 	defer bufferPool.Put(buf)
 	err = f.MarshalBinary(s.marshal, buf)
 	if err != nil {
-		return nil, fmt.Errorf("NewStream: marshal fail %s", err.Error())
+		return nil, fmt.Errorf("Client.NewStream: 编码失败 %s", err.Error())
 	}
 	err = c.send(buf.bytes())
 	if err != nil {
-		return nil, fmt.Errorf("NewStream: %s", err.Error())
+		return nil, fmt.Errorf("Client.NewStream: %s", err.Error())
 	}
 	go func() {
 		<-ctx.Done()
@@ -188,7 +197,7 @@ func (c *Client) CloseStream(s *Stream) {
 }
 
 //Subscribe 订阅主题
-func (c *Client) Subscribe(topic string, handler func([]byte) error) error {
+func (c *Client) Subscribe(topic string, handler WriterFunc) error {
 	c.callMap.Store(topic, handler)
 	return c.sendFrame(context.TODO(), utils.StatusSubscribe16, c.Id, topic, nil)
 }
@@ -199,10 +208,16 @@ func (c *Client) Unsubscribe(topic string) error {
 	return c.sendFrame(context.TODO(), utils.StatusUnsubscribe16, c.Id, topic, nil)
 }
 
-func (c *Client) clientHandler(recv []byte, send func([]byte) error) error {
+func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) error {
 	var f Frame
 	var n int
 	var err error
+	//入口拦截
+	for v := range c.IntletHook {
+		if recv, err = c.IntletHook[v](recv, send); err != nil {
+			return err
+		}
+	}
 	if n, err = f.UnmarshalHeader(recv); err != nil {
 		return err
 	}
@@ -233,7 +248,7 @@ func (c *Client) clientHandler(recv []byte, send func([]byte) error) error {
 	case utils.StatusBroadcast16:
 		v, ok := c.callMap.Load(f.ServiceMethod)
 		if ok {
-			handler := v.(func([]byte) error)
+			handler := v.(WriterFunc)
 			var data []byte
 			err = c.Unmarshal(recv[n:], &data)
 			if err != nil {
@@ -244,7 +259,7 @@ func (c *Client) clientHandler(recv []byte, send func([]byte) error) error {
 				return err
 			}
 		} else {
-			return fmt.Errorf("broadcast no found f.ServiceMethod with %s", f.ServiceMethod)
+			return fmt.Errorf("Client.clientHandler：broadcast no found f.ServiceMethod with %s", f.ServiceMethod)
 		}
 	case utils.StatusStream16:
 		v, ok := c.callMap.Load(f.Seq)
@@ -253,7 +268,7 @@ func (c *Client) clientHandler(recv []byte, send func([]byte) error) error {
 			copy(buf, recv[n:])
 			v.(*Stream).payload <- buf
 		} else {
-			return fmt.Errorf("stream no found f.Seq with %d", f.Seq)
+			return fmt.Errorf("Client.clientHandler：stream no found f.Seq with %d", f.Seq)
 		}
 	}
 	return nil

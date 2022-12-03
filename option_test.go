@@ -15,7 +15,3 @@ func TestOptions(t *testing.T) {
 		t.Fatal(o1.Logger, o2.Logger)
 	}
 }
-
-/*
-[Info ] 2022-10-20 19:14:22 Pid: 114284
-*/

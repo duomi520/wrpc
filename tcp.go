@@ -2,10 +2,8 @@ package wrpc
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,8 +24,8 @@ type TCPServer struct {
 	tcpListener         *net.TCPListener
 	ProtocolMagicNumber uint32
 	tcpPort             string
-	Hijacker            func([]byte, func([]byte) error) error
-	Handler             func([]byte, func([]byte) error) error
+	Hijacker            func([]byte, WriterFunc) error
+	Handler             func([]byte, WriterFunc, func()) error
 	// 1 - stop
 	stop   int32
 	once   sync.Once
@@ -35,19 +33,19 @@ type TCPServer struct {
 }
 
 //NewTCPServer 新建
-func NewTCPServer(port string, hijacker, handler func([]byte, func([]byte) error) error, logger utils.ILogger) *TCPServer {
+func NewTCPServer(port string, hijacker func([]byte, WriterFunc) error, handler func([]byte, WriterFunc, func()) error, logger utils.ILogger) *TCPServer {
 	if handler == nil {
-		logger.Fatal("TCP Handler不为nil")
+		logger.Fatal("NewTCPServer: TCP Handler不为nil")
 		return nil
 	}
 	tcpAddress, err := net.ResolveTCPAddr("tcp4", port)
 	if err != nil {
-		logger.Fatal("ResolveTCPAddr失败: ", err.Error())
+		logger.Fatal("NewTCPServer：ResolveTCPAddr失败: ", err.Error())
 		return nil
 	}
 	listener, err := net.ListenTCP("tcp", tcpAddress)
 	if err != nil {
-		logger.Fatal("TCP监听端口失败:", err.Error())
+		logger.Fatal("NewTCPServer：TCP监听端口失败:", err.Error())
 		return nil
 	}
 	s := &TCPServer{
@@ -68,9 +66,9 @@ func (s *TCPServer) Stop() {
 	atomic.StoreInt32(&s.stop, 1)
 	s.once.Do(func() {
 		if err := s.tcpListener.Close(); err != nil {
-			s.Logger.Error("TCP监听端口关闭失败: ", err.Error())
+			s.Logger.Error("TCPServer.Stop：TCP监听端口关闭失败: ", err.Error())
 		} else {
-			s.Logger.Debug("TCP监听端口关闭。")
+			s.Logger.Debug("TCPServer.Stop：TCP监听端口关闭。")
 		}
 		time.Sleep(100 * time.Millisecond)
 	})
@@ -78,8 +76,8 @@ func (s *TCPServer) Stop() {
 
 //Run 运行
 func (s *TCPServer) Run() {
-	s.Logger.Debug("TCP监听端口", s.tcpPort)
-	s.Logger.Debug("TCP已初始化连接，等待客户端连接……")
+	s.Logger.Debug("TCPServer.Run：TCP监听端口", s.tcpPort)
+	s.Logger.Debug("TCPServer.Run：TCP已初始化连接，等待客户端连接……")
 	tcpGroup := sync.WaitGroup{}
 	//设置重试延迟时间
 	var tempDelay time.Duration
@@ -87,7 +85,7 @@ func (s *TCPServer) Run() {
 		conn, err := s.tcpListener.AcceptTCP()
 		if err != nil {
 			if nErr, ok := err.(net.Error); ok && nErr.Timeout() {
-				s.Logger.Warn("Temporary error when accepting new connections: ", err.Error())
+				s.Logger.Warn("TCPServer.Run：Temporary error when accepting new connections: ", err.Error())
 				if tempDelay == 0 {
 					tempDelay = 5 * time.Millisecond
 				} else {
@@ -102,27 +100,27 @@ func (s *TCPServer) Run() {
 				continue
 			}
 			if !strings.Contains(err.Error(), "use of closed network connection") {
-				s.Logger.Warn("Permanent error when accepting new connections: ", err.Error())
+				s.Logger.Warn("TCPServer.Run：Permanent error when accepting new connections: ", err.Error())
 			}
 			break
 		}
 		//如果没有网络错误，下次网络错误的重试时间重新开始
 		tempDelay = 0
 		if err = conn.SetNoDelay(false); err != nil {
-			s.Logger.Error("TCP设定操作系统是否应该延迟数据包传递失败: " + err.Error())
+			s.Logger.Error("TCPServer.Run：TCP设定操作系统是否应该延迟数据包传递失败: " + err.Error())
 		}
 		//协议头
 		pm := make([]byte, 4)
 		if err := conn.SetReadDeadline(time.Now().Add(DefaultDeadlineDuration)); err != nil {
-			s.Logger.Error("读取协议头超时: ", conn.RemoteAddr().Network(), err.Error())
+			s.Logger.Error("TCPServer.Run：读取协议头超时: ", conn.RemoteAddr().Network(), err.Error())
 			continue
 		}
 		if _, err := conn.Read(pm); err != nil {
-			s.Logger.Error("读取协议头失败: ", conn.RemoteAddr().Network(), err.Error())
+			s.Logger.Error("TCPServer.Run：读取协议头失败: ", conn.RemoteAddr().Network(), err.Error())
 			continue
 		}
 		if utils.BytesToInteger32[uint32](pm) != s.ProtocolMagicNumber {
-			s.Logger.Warn("无效的协议头: ", conn.RemoteAddr().Network())
+			s.Logger.Warn("TCPServer.Run: 无效的协议头: ", conn.RemoteAddr().Network())
 			continue
 		}
 		//设置TCP保持长连接
@@ -143,17 +141,17 @@ func (s *TCPServer) Run() {
 			tcpGroup.Done()
 		}()
 	}
-	s.Logger.Debug("TCP等待子协程关闭……")
+	s.Logger.Debug("TCPServer.Run: TCP等待子协程关闭……")
 	tcpGroup.Wait()
-	s.Logger.Debug("TCPServer关闭。")
+	s.Logger.Debug("TCPServer.Run: TCPServer关闭。")
 	time.Sleep(100 * time.Millisecond)
 }
 
 //TCPSession 会话
 type TCPSession struct {
 	conn     *net.TCPConn
-	Hijacker func([]byte, func([]byte) error) error
-	Handler  func([]byte, func([]byte) error) error
+	Hijacker func([]byte, WriterFunc) error
+	Handler  func([]byte, WriterFunc, func()) error
 	// 1 - stop
 	stopSign *int32
 	Logger   utils.ILogger
@@ -194,11 +192,11 @@ func (ts *TCPSession) tcpClientReceive() {
 			} else {
 				if flag == utils.StatusHijacker16 {
 					if err := ts.Hijacker(buf[ir+6:tail], ts.Send); err != nil {
-						ts.Logger.Error("tcpClientReceive：" + err.Error())
+						ts.Logger.Error("TCPSession.tcpClientReceive：" + err.Error())
 					}
 				} else {
-					if err := ts.Handler(buf[ir:tail], ts.Send); err != nil {
-						ts.Logger.Error("tcpClientReceive：" + err.Error())
+					if err := ts.Handler(buf[ir:tail], ts.Send, nil); err != nil {
+						ts.Logger.Error("TCPSession.tcpClientReceive：" + err.Error())
 					}
 				}
 				ir = tail
@@ -215,13 +213,13 @@ func (ts *TCPSession) tcpClientReceive() {
 end:
 	if err != nil && err != io.EOF {
 		if !strings.Contains(err.Error(), "wsarecv: An existing connection was forcibly closed by the remote host.") && !strings.Contains(err.Error(), "use of closed network connection") {
-			ts.Logger.Error(ts.conn.RemoteAddr().String(), " tcpClientReceive：", err.Error())
+			ts.Logger.Error("TCPSession.tcpClientReceive：", ts.conn.RemoteAddr().String(), err.Error())
 		} else {
-			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive：", err.Error())
+			ts.Logger.Debug("TCPSession.tcpClientReceive：", ts.conn.RemoteAddr().String(), err.Error())
 		}
 	}
 	atomic.StoreInt32(ts.stopSign, 1)
-	ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpClientReceive stop")
+	ts.Logger.Debug("TCPSession.tcpClientReceive: ", ts.conn.RemoteAddr().String(), " stop")
 }
 
 func (ts *TCPSession) tcpServerReceive() {
@@ -274,13 +272,17 @@ func (ts *TCPSession) tcpServerReceive() {
 			} else {
 				if flag == utils.StatusHijacker16 {
 					if err := ts.Hijacker(sl.buf[cursor+6:tail], ts.Send); err != nil {
-						ts.Logger.Error("tcpServerReceive" + err.Error())
+						ts.Logger.Error("TCPSession.tcpServerReceive：" + err.Error())
 					}
 					sl.used(uint64(tail - cursor))
 				} else {
-					var tasker task
-					tasker.l, tasker.r, tasker.s, tasker.session = cursor, tail, sl, ts
-					wgo(tasker.do)
+					n := tail - cursor
+					callback := func() {
+						sl.used(uint64(n))
+					}
+					if err := ts.Handler(sl.buf[cursor:tail], ts.Send, callback); err != nil {
+						ts.Logger.Error("TCPSession.tcpServerReceive： " + err.Error())
+					}
 				}
 				cursor = tail
 			}
@@ -293,55 +295,29 @@ func (ts *TCPSession) tcpServerReceive() {
 end:
 	if err != nil && err != io.EOF {
 		if !strings.Contains(err.Error(), "wsarecv: An existing connection was forcibly closed by the remote host.") && !strings.Contains(err.Error(), "use of closed network connection") {
-			ts.Logger.Error(ts.conn.RemoteAddr().String(), " tcpServerReceive: ", err.Error())
+			ts.Logger.Error("TCPSession.tcpServerReceive: ", ts.conn.RemoteAddr().String(), err.Error())
 		} else {
-			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive: ", err.Error())
+			ts.Logger.Debug("TCPSession.tcpServerReceive: ", ts.conn.RemoteAddr().String(), err.Error())
 		}
 	}
 	if err = ts.conn.Close(); err != nil {
 		ts.Logger.Error(err.Error())
 	}
-	ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpServerReceive stop")
-}
-
-type task struct {
-	l       int
-	r       int
-	s       *slot
-	session *TCPSession
-}
-
-func (t task) do() {
-	defer func() {
-		if err := recover(); err != nil {
-			const size = 65536
-			buf := make([]byte, size)
-			end := runtime.Stack(buf, false)
-			if end > size {
-				end = size
-			}
-			buf = buf[:end]
-			t.session.Logger.Error(fmt.Sprintf("task.do： %s \n%s", err, buf))
-		}
-	}()
-	if err := t.session.Handler(t.s.buf[t.l:t.r], t.session.Send); err != nil {
-		t.session.Logger.Error("tcpServerReceive->task.do: " + err.Error())
-	}
-	t.s.used(uint64(t.r - t.l))
+	ts.Logger.Debug("TCPSession.tcpServerReceive: ", ts.conn.RemoteAddr().String(), " stop")
 }
 
 //TCPDial 连接
-func TCPDial(url string, protocolMagicNumber uint32, hijacker, handler func([]byte, func([]byte) error) error, logger utils.ILogger) (*TCPSession, error) {
+func TCPDial(url string, protocolMagicNumber uint32, hijacker func([]byte, WriterFunc) error, handler func([]byte, WriterFunc, func()) error, logger utils.ILogger) (*TCPSession, error) {
 	tcpAddr, err := net.ResolveTCPAddr("tcp4", url)
 	if err != nil {
-		return nil, errors.New("TCPDial tcpAddr fail: " + err.Error())
+		return nil, errors.New("TCPDial: tcpAddr fail: " + err.Error())
 	}
 	conn, err := net.DialTCP("tcp", nil, tcpAddr)
 	if err != nil {
-		return nil, errors.New("TCPDial 连接服务端失败: " + err.Error())
+		return nil, errors.New("TCPDial: 连接服务端失败: " + err.Error())
 	}
 	if conn.SetNoDelay(false) != nil {
-		return nil, errors.New("TCPDial 设定操作系统是否应该延迟数据包传递失败: " + err.Error())
+		return nil, errors.New("TCPDial: 设定操作系统是否应该延迟数据包传递失败: " + err.Error())
 	}
 	var sign int32
 	c := &TCPSession{
@@ -352,15 +328,15 @@ func TCPDial(url string, protocolMagicNumber uint32, hijacker, handler func([]by
 		Logger:   logger,
 	}
 	go c.tcpClientReceive()
-	if err := defaultGuardian.AddJob(c.tcpPing); err != nil {
-		return nil, errors.New("定时任务失败: " + err.Error())
+	if err := tcpClientGuardian.AddJob(c.tcpPing); err != nil {
+		return nil, errors.New("TCPDial: 定时任务失败: " + err.Error())
 	}
 	//发送协议头
 	pm := make([]byte, 4)
 	utils.CopyInteger32(pm, protocolMagicNumber)
 	if err := c.sendWithDeadline(DefaultDeadlineDuration, pm); err != nil {
 		atomic.StoreInt32(&sign, 1)
-		return nil, errors.New("写入协议头失败: " + err.Error())
+		return nil, errors.New("TCPDial: 写入协议头失败: " + err.Error())
 	}
 	return c, nil
 }
@@ -372,7 +348,7 @@ func (ts *TCPSession) tcpPing() bool {
 				ts.Logger.Error(err.Error())
 			}
 			atomic.StoreInt32(ts.stopSign, 1)
-			ts.Logger.Debug(ts.conn.RemoteAddr().String(), " tcpPing stop")
+			ts.Logger.Debug("TCPSession.tcpPing: ", ts.conn.RemoteAddr().String(), " stop")
 		}
 	}()
 	if atomic.LoadInt32(ts.stopSign) == 1 {

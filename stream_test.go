@@ -28,8 +28,8 @@ func (hi *hi) Order(ctx context.Context, s *Stream) error {
 }
 
 func TestClientStream(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	logger, _ := utils.NewWLogger(utils.ErrorLevel, "")
 	defer logger.Close()
 	o := NewOptions(WithLogger(logger))
@@ -75,25 +75,25 @@ func TestClientStream(t *testing.T) {
 }
 
 /*
-2022/10/23 09:58:25 &{3 [charset content http-equiv] [utf-8 webkit X-UA-Compatible]}
-2022/10/23 09:58:26 s 10 0
-2022/10/23 09:58:26 c 0 10
-2022/10/23 09:58:26 s 11 1
-2022/10/23 09:58:26 c 1 11
-2022/10/23 09:58:26 s 12 2
-2022/10/23 09:58:26 c 2 12
-2022/10/23 09:58:26 s 13 3
-2022/10/23 09:58:26 s 14 5
-2022/10/23 09:58:26 s 15 4
-2022/10/23 09:58:26 c 3 13
-2022/10/23 09:58:26 c 4 14
-2022/10/23 09:58:26 c 5 15
-2022/10/23 09:58:26 context canceled
+2022/12/03 22:01:46 &{3 [charset content http-equiv] [utf-8 webkit X-UA-Compatible]}
+2022/12/03 22:01:46 c 0 10
+2022/12/03 22:01:46 s 10 0
+2022/12/03 22:01:46 s 11 1
+2022/12/03 22:01:46 s 12 2
+2022/12/03 22:01:46 c 1 11
+2022/12/03 22:01:46 c 2 12
+2022/12/03 22:01:46 s 13 3
+2022/12/03 22:01:46 c 3 13
+2022/12/03 22:01:46 s 14 4
+2022/12/03 22:01:46 s 15 5
+2022/12/03 22:01:46 c 4 14
+2022/12/03 22:01:46 c 5 15
+2022/12/03 22:01:46 context canceled
 */
 
 func TestStreamCtxCancelFunc(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
+	Default()
+	defer Stop()
 	o := NewOptions()
 	s := NewService(o)
 	s.TCPServer(":4567")
@@ -119,6 +119,6 @@ func TestStreamCtxCancelFunc(t *testing.T) {
 }
 
 /*
-2022/10/23 09:46:06 <nil>
-2022/10/23 09:59:27 context canceled
+2022/12/03 22:02:12 <nil>
+2022/12/03 22:02:12 context canceled
 */

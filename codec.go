@@ -7,9 +7,6 @@ import (
 	"github.com/duomi520/utils"
 )
 
-//ErrInsufficientLength 定义错误
-var ErrInsufficientLength = errors.New("utils.Frame|bytes is too short")
-
 var framePing, framePong, frameGoaway, frameCtxCancelFunc []byte
 
 func init() {
@@ -93,7 +90,7 @@ func (f Frame) MarshalBinary(marshal func(any, io.Writer) error, buf *buffer) er
 //UnmarshalHeader 解码头部，Payload不解析，返会头长度及错误
 func (f *Frame) UnmarshalHeader(data []byte) (int, error) {
 	if len(data) < FrameMinLenght {
-		return 0, ErrInsufficientLength
+		return 0, errors.New("Frame.UnmarshalHeader：bytes is too short")
 	}
 	f.Status = utils.BytesToInteger16[uint16](data[4:6])
 	f.Seq = utils.BytesToInteger64[int64](data[6:14])
@@ -135,7 +132,7 @@ func GetStatus(data []byte) uint16 {
 */
 
 //发送的[]byte前部需留 6 的空间
-func HijackerSend(data []byte, send func([]byte) error) error {
+func HijackerSend(data []byte, send WriterFunc) error {
 	utils.CopyInteger32(data[0:4], uint32(len(data)))
 	utils.CopyInteger16(data[4:6], utils.StatusHijacker16)
 	return send(data)
