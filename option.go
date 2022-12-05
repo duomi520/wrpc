@@ -92,22 +92,22 @@ func WithHijacker(h func([]byte, WriterFunc) error) Option {
 }
 
 //WithIntletHook 入口拦截器
-func WithIntletHook(chain []func([]byte, WriterFunc) ([]byte, error)) Option {
+func WithIntletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	return func(o *Options) {
 		if len(chain) == 0 {
 			o.Logger.Fatal("WithIntletHook：IntletHook is nil")
 		}
-		o.IntletHook = chain
+		o.IntletHook = append(o.IntletHook, chain...)
 	}
 }
 
 //WithOutletHook 出口拦截器
-func WithOutletHook(chain []func([]byte, WriterFunc) ([]byte, error)) Option {
+func WithOutletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	return func(o *Options) {
 		if len(chain) == 0 {
 			o.Logger.Fatal("WithOutletHook：OutletHook is nil")
 		}
-		o.OutletHook = chain
+		o.OutletHook = append(o.OutletHook, chain...)
 	}
 }
 

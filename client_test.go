@@ -47,6 +47,7 @@ func TestClientCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	defer client.Close()
 	var reply string
 	if err := client.Call(context.TODO(), "hi.SayHello", "linda", &reply); err != nil {
 		t.Fatal(err.Error())
@@ -85,6 +86,7 @@ func TestCtxCancelFunc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	defer client.Close()
 	var reply string
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -177,10 +179,10 @@ func TestHijacker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	defer c.Close()
 	HijackerSend([]byte("123456hi"), c.Send)
 	HijackerSend([]byte("123456jackey"), c.Send)
 	time.Sleep(250 * time.Millisecond)
-	c.Close()
 	s.Stop()
 	time.Sleep(1 * time.Second)
 }
@@ -218,6 +220,7 @@ func TestClientHook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
+	defer client.Close()
 	var reply string
 	if err := client.Call(context.TODO(), "hi.SayHello", "linda", &reply); err != nil {
 		t.Fatal(err.Error())

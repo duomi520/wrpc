@@ -1,9 +1,7 @@
 package wrpc
 
 import (
-	"os"
 	"runtime"
-	"strconv"
 
 	"github.com/duomi520/utils"
 )
@@ -19,11 +17,6 @@ func Default() {
 //Stop
 func Stop() {
 	tcpClientGuardian.Release()
-}
-
-//PrintPid
-func PrintPid(logger utils.ILogger) {
-	logger.Info("Pid: ", strconv.Itoa(os.Getpid()))
 }
 
 func formatRecover() ([]byte, any) {
