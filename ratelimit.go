@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -17,7 +18,8 @@ type TokenBucketLimiter struct {
 	//加入的时间间隔
 	Snippet time.Duration
 	//令牌
-	tokens   int64
+	tokens int64
+	//定时执行
 	guardian *utils.Guardian
 	//退出标志 1-退出
 	stopFlag int32
@@ -25,51 +27,53 @@ type TokenBucketLimiter struct {
 }
 
 func (t *TokenBucketLimiter) limit(b []byte, w WriterFunc) ([]byte, error) {
-	t.Wait(1)
-	return b, nil
+	err := t.Take(1)
+	return b, err
 }
 
+//NewTokenBucketLimiter limitRate, limitSize,snippet数组较小时，准确度低。
 func NewTokenBucketLimiter(limitRate, limitSize int64, snippet time.Duration, l utils.ILogger) *TokenBucketLimiter {
 	t := &TokenBucketLimiter{
 		LimitRate: limitRate,
 		LimitSize: limitSize,
 		Snippet:   snippet,
 		tokens:    limitSize,
-		stopFlag:  0,
-		logger:    l,
+
+		stopFlag: 0,
+		logger:   l,
 	}
 	if t.Snippet == 0 {
-		//默认1秒
-		t.Snippet = 1000 * time.Millisecond
+		//默认0.1秒
+		t.Snippet = 100 * time.Millisecond
 	}
 	t.guardian = utils.NewGuardian(snippet, l)
 	t.guardian.AddJob(t.run)
 	return t
 }
 
-//Wait 阻塞等待,申请n个令牌，取不到足够数量时阻塞。
-func (t *TokenBucketLimiter) Wait(n int64) {
-	for {
-		if atomic.LoadInt32(&t.stopFlag) == 1 {
-			return
-		}
-		new := atomic.AddInt64(&t.tokens, -n)
-		if new > -1 {
-			return
-		}
-		atomic.AddInt64(&t.tokens, n)
-		time.Sleep(t.Snippet)
+//Wait 等待,申请n个令牌，取不到足够数量时返回错误。
+func (t *TokenBucketLimiter) Take(n int64) error {
+	if atomic.LoadInt32(&t.stopFlag) == 1 {
+		return nil
 	}
+	new := atomic.AddInt64(&t.tokens, -n)
+	if new > -1 {
+		return nil
+	}
+	return errors.New("TokenBucketLimiter.Take：被限流")
 }
 
 func (t *TokenBucketLimiter) run() bool {
 	if atomic.LoadInt32(&t.stopFlag) == 1 {
 		return true
 	}
-	//竟态下，准确度低，影响不大。
+	//竟态下，牺牲准确度。
 	new := atomic.AddInt64(&t.tokens, t.LimitRate)
 	if new > t.LimitSize {
 		atomic.StoreInt64(&t.tokens, t.LimitSize)
+	}
+	if new < t.LimitRate {
+		atomic.StoreInt64(&t.tokens, t.LimitRate)
 	}
 	return false
 }

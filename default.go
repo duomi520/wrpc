@@ -31,6 +31,3 @@ func formatRecover() ([]byte, any) {
 	}
 	return nil, nil
 }
-
-// https://github.com/panjf2000/ants/blob/master/README_ZH.md
-// https://blog.csdn.net/darjun/article/details/117576252

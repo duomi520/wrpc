@@ -37,7 +37,8 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 	c.warpSend = func(b []byte) error {
 		for v := range o.OutletHook {
 			if b, err = o.OutletHook[v](b, t.Send); err != nil {
-				return err
+				c.Logger.Warn(err.Error())
+				return nil
 			}
 		}
 		return t.Send(b)
@@ -215,7 +216,8 @@ func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) er
 	//入口拦截
 	for v := range c.IntletHook {
 		if recv, err = c.IntletHook[v](recv, send); err != nil {
-			return err
+			c.Logger.Warn(err.Error())
+			return nil
 		}
 	}
 	if n, err = f.UnmarshalHeader(recv); err != nil {

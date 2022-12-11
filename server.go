@@ -245,14 +245,18 @@ func (sh *Service) serveRequest(recv []byte, send WriterFunc, callback func()) e
 	//入口拦截
 	for v := range sh.IntletHook {
 		if recv, err = sh.IntletHook[v](recv, send); err != nil {
-			return err
+			f.UnmarshalHeader(recv)
+			sh.sendError(f, send, err)
+			sh.Logger.Warn(err.Error())
+			return nil
 		}
 	}
 	//出口拦截
 	warpSend := func(b []byte) error {
 		for v := range sh.OutletHook {
 			if b, err = sh.OutletHook[v](b, send); err != nil {
-				return err
+				sh.Logger.Warn(err.Error())
+				return nil
 			}
 		}
 		return send(b)
