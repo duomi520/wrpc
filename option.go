@@ -12,6 +12,8 @@ var SnowFlakeStartupTime int64 = time.Date(2023, time.January, 1, 0, 0, 0, 0, ti
 
 type WriterFunc func([]byte) error
 
+func doNothing() {}
+
 //Options 配置
 type Options struct {
 	ProtocolMagicNumber uint32
@@ -27,7 +29,9 @@ type Options struct {
 	//出口拦截器
 	OutletHook []func([]byte, WriterFunc) ([]byte, error)
 	//熔断器
-	//Breaker IBreaker
+	AllowRequest func() error
+	MarkSuccess  func()
+	MarkFailed   func()
 	//平衡器
 	//Balancer func([]int) int
 	//Registry  IRegistry
@@ -47,6 +51,11 @@ func NewOptions(opts ...Option) *Options {
 	o.Logger, _ = utils.NewWLogger(utils.FatalLevel, "")
 	o.Marshal = jsonMarshal
 	o.Unmarshal = json.Unmarshal
+	o.AllowRequest = func() error {
+		return nil
+	}
+	o.MarkSuccess = doNothing
+	o.MarkFailed = doNothing
 	for _, v := range opts {
 		v(&o)
 	}
@@ -111,6 +120,17 @@ func WithOutletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	}
 }
 
+//WithBreaker 熔断器
+func WithBreaker(allow func() error, success, failed func()) Option {
+	return func(o *Options) {
+		if allow != nil && success != nil && failed != nil {
+			o.AllowRequest = allow
+			o.MarkSuccess = success
+			o.MarkFailed = failed
+		}
+	}
+}
+
 /*
 //WithRegistry 服务的注册和发现
 func WithRegistry(ctx context.Context, info NodeInfo, r IRegistry) Option {
@@ -128,12 +148,6 @@ func WithRegistry(ctx context.Context, info NodeInfo, r IRegistry) Option {
 			o.tcpServer = NewTCPServer(ctx, info.TCPPort, o.serveRequest, o.Logger)
 			go o.tcpServer.Run()
 		}
-	}
-}
-//WithBreaker 熔断器
-func WithBreaker(b IBreaker) Option {
-	return func(o *Options) {
-		o.Breaker = b
 	}
 }
 */

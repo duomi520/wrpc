@@ -31,7 +31,7 @@ func (t *TokenBucketLimiter) limit(b []byte, w WriterFunc) ([]byte, error) {
 	return b, err
 }
 
-//NewTokenBucketLimiter limitRate, limitSize,snippet数组较小时，准确度低。
+//NewTokenBucketLimiter limitRate, limitSize,snippet数值较小时，准确度低。
 func NewTokenBucketLimiter(limitRate, limitSize int64, snippet time.Duration, l utils.ILogger) *TokenBucketLimiter {
 	t := &TokenBucketLimiter{
 		LimitRate: limitRate,
@@ -91,3 +91,9 @@ func (t *TokenBucketLimiter) Close() {
 // https://github.com/uber-go/ratelimit
 // https://mp.weixin.qq.com/s/T_LvVfAOzgANO1XSCViJrw
 // https://mp.weixin.qq.com/s/YCvUTwpe0jUdwcKyQQj7hA
+
+// TODO
+// https://pandaychen.github.io/2020/07/12/KRATOS-LIMITER/
+// https://github.com/alibaba/Sentinel/wiki/%E7%B3%BB%E7%BB%9F%E8%87%AA%E9%80%82%E5%BA%94%E9%99%90%E6%B5%81
+// https://segmentfault.com/a/1190000041950209
+// https://my.oschina.net/u/4545365/blog/5281780

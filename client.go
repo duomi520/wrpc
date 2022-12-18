@@ -65,11 +65,18 @@ func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, servic
 	}
 	buf := bufferPool.Get().(*buffer)
 	defer bufferPool.Put(buf)
-	err := f.MarshalBinary(c.Marshal, buf)
-	if err != nil {
+	var err error
+	if err = f.MarshalBinary(c.Marshal, buf); err != nil {
 		return err
 	}
-	err = c.warpSend(buf.bytes())
+	if err = c.AllowRequest(); err != nil {
+		return err
+	}
+	if err = c.warpSend(buf.bytes()); err != nil {
+		c.MarkFailed()
+	} else {
+		c.MarkSuccess()
+	}
 	return err
 }
 
