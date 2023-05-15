@@ -9,7 +9,7 @@ import (
 	"github.com/duomi520/utils"
 )
 
-//Stream 流
+// Stream 流
 type Stream struct {
 	ctx           context.Context
 	id            int64
@@ -37,7 +37,7 @@ func (s *Stream) Send(data any) error {
 	return err
 }
 
-//Recv 非顺序接受数据
+// Recv 非顺序接受数据
 func (s *Stream) Recv() (any, error) {
 	var data []byte
 	select {
@@ -50,13 +50,10 @@ func (s *Stream) Recv() (any, error) {
 	return v, err
 }
 
-//release 释放
+// release 释放
 func (s *Stream) release() {
 	s.closeOnce.Do(func() {
-		f := make([]byte, 18)
-		copy(f, frameCtxCancelFunc)
-		utils.CopyInteger64(f[6:], s.id)
-		s.send(f)
+		s.send(MarshalBinaryFrameCtxCancelFunc(s.id))
 		close(s.payload)
 	})
 }

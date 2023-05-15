@@ -2,7 +2,6 @@ package wrpc
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,10 +22,10 @@ type Quotient struct {
 }
 type Arith int
 
-func (t *Arith) Add100(_ context.Context, args int) (int, error) {
+func (t *Arith) Add100(_ *RPCContext, args int) (int, error) {
 	return args + 100, nil
 }
-func (t *Arith) Double(_ context.Context, args []int) ([]int, error) {
+func (t *Arith) Double(_ *RPCContext, args []int) ([]int, error) {
 	var reply []int
 	for i := range args {
 		reply = append(reply, args[i]*2)
@@ -34,10 +33,10 @@ func (t *Arith) Double(_ context.Context, args []int) ([]int, error) {
 	return reply, nil
 }
 
-func (t *Arith) Multiply(_ context.Context, args Args) (int, error) {
+func (t *Arith) Multiply(_ *RPCContext, args Args) (int, error) {
 	return args.A * args.B, nil
 }
-func (t *Arith) Divide(_ context.Context, args Args) (Quotient, error) {
+func (t *Arith) Divide(_ *RPCContext, args Args) (Quotient, error) {
 	var quo Quotient
 	if args.B == 0 {
 		return quo, errors.New("divide by zero")
@@ -105,7 +104,7 @@ func TestRPC(t *testing.T) {
 	if err := r.RegisterRPC("计算", arith); err != nil {
 		t.Fatal(err)
 	}
-	s := NewTCPServer(":4567", nil, r.serveRequest, logger)
+	s := NewTCPServer(":4567", r.serveRequest, logger)
 	go s.Run()
 	rc1 := rpcResponseGet()
 	rc2 := rpcResponseGet()
@@ -130,20 +129,20 @@ func TestRPC(t *testing.T) {
 	c.callMap.Store(int64(1), rc1)
 	c.callMap.Store(int64(2), rc2)
 	c.callMap.Store(int64(3), rc3)
-	f1 := Frame{utils.StatusRequest16, 1, "计算.Multiply", nil, Args{7, 8}}
+	f1 := Frame{utils.StatusRequest16, 1, "计算.Multiply", nil, Args{7, 8}, nil}
 	buf := bufferPool.Get().(*buffer)
 	defer bufferPool.Put(buf)
 	f1.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
-	f2 := Frame{utils.StatusRequest16, 2, "计算.Divide", nil, Args{7, 8}}
+	f2 := Frame{utils.StatusRequest16, 2, "计算.Divide", nil, Args{7, 8}, nil}
 	buf.reset()
 	f2.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)
 	}
-	f3 := Frame{utils.StatusRequest16, 3, "计算.Divide", nil, Args{9, 0}}
+	f3 := Frame{utils.StatusRequest16, 3, "计算.Divide", nil, Args{9, 0}, nil}
 	buf.reset()
 	f3.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
@@ -204,7 +203,7 @@ func TestServerHook(t *testing.T) {
 	if err := r.RegisterRPC("计算", arith); err != nil {
 		t.Fatal(err)
 	}
-	s := NewTCPServer(":4567", nil, r.serveRequest, logger)
+	s := NewTCPServer(":4567", r.serveRequest, logger)
 	go s.Run()
 	c, err := NewTCPClient("127.0.0.1:4567", NewOptions(WithLogger(logger)))
 	if err != nil {
@@ -218,7 +217,7 @@ func TestServerHook(t *testing.T) {
 	c.callMap.Store(int64(1), rc)
 	buf := bufferPool.Get().(*buffer)
 	defer bufferPool.Put(buf)
-	f := Frame{utils.StatusRequest16, 1, "计算.Add100", nil, 6}
+	f := Frame{utils.StatusRequest16, 1, "计算.Add100", nil, 6, nil}
 	f.MarshalBinary(jsonMarshal, buf)
 	if err := c.send(buf.bytes()); err != nil {
 		t.Fatal(err)

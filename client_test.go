@@ -15,22 +15,16 @@ import (
 type hi struct {
 }
 
-func (hi *hi) SayHello(_ context.Context, args string) (string, error) {
+func (hi *hi) SayHello(_ *RPCContext, args string) (string, error) {
 	reply := "Hello " + args
 	return reply, nil
 }
-func (hi *hi) Error(_ context.Context, args string) (string, error) {
+func (hi *hi) Error(_ *RPCContext, args string) (string, error) {
 	return "", errors.New("This a error.")
 }
-func (hi *hi) Meta(ctx context.Context, args string) (string, error) {
-	m := GetMetadata(ctx)
+func (hi *hi) Meta(ctx *RPCContext, args string) (string, error) {
+	m := ctx.Metadata
 	log.Println(m.GetAll())
-	return "", nil
-}
-func (hi *hi) CancelFunc(ctx context.Context, args string) (string, error) {
-	log.Println("wait ctx cancel")
-	<-ctx.Done()
-	log.Println("ctx done")
 	return "", nil
 }
 
@@ -64,7 +58,7 @@ func TestClientCall(t *testing.T) {
 	meta.Set("charset", "utf-8")
 	meta.Set("content", "webkit")
 	meta.Set("http-equiv", "X-UA-Compatible")
-	ctx := MetadataContext(context.Background(), &meta)
+	ctx := MetadataContext(context.TODO(), &meta)
 	if err := client.Call(ctx, "hi.Meta", "linda", &reply); err != nil {
 		t.Fatal(err.Error())
 	}
@@ -73,64 +67,31 @@ func TestClientCall(t *testing.T) {
 /*
 2022/10/18 20:41:30 [charset content http-equiv] [utf-8 webkit X-UA-Compatible]
 */
-func TestCtxCancelFunc(t *testing.T) {
-	Default()
-	defer Stop()
-	o := NewOptions()
-	s := NewService(o)
-	s.TCPServer(":4567")
-	defer s.Stop()
-	hi := new(hi)
-	s.RegisterRPC("hi", hi)
-	client, err := NewTCPClient("127.0.0.1:4567", o)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	defer client.Close()
-	var reply string
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(time.Second)
-		cancel()
-	}()
-	if err := client.Call(ctx, "hi.CancelFunc", "hi", &reply); err != nil {
-		if !strings.EqualFold(err.Error(), "context canceled") {
+/*
+	func TestClientGo(t *testing.T) {
+		StartGuardian()
+		defer StopGuardian()
+		o := NewOptions()
+		s := NewService(o)
+		s.TCPServer(":4567")
+		defer s.Stop()
+		hi := new(hi)
+		s.RegisterRPC("hi", hi)
+		client, err := NewTCPClient("127.0.0.1:4567", o)
+		if err != nil {
 			t.Fatal(err.Error())
 		}
+		var reply string
+		done := make(chan struct{})
+		err = client.Go(context.TODO(), "hi.SayHello", "linda", &reply, done)
+		if err != nil {
+			t.Fatal(err.Error())
+		}
+		<-done
+		if !strings.EqualFold(reply, "Hello linda") {
+			t.Fatal(reply)
+		}
 	}
-	time.Sleep(250 * time.Millisecond)
-}
-
-/*
-2022/10/22 23:00:39 wait ctx cancel
-2022/10/22 23:00:40 ctx done
-*/
-
-/*
-func TestClientGo(t *testing.T) {
-	StartGuardian()
-	defer StopGuardian()
-	o := NewOptions()
-	s := NewService(o)
-	s.TCPServer(":4567")
-	defer s.Stop()
-	hi := new(hi)
-	s.RegisterRPC("hi", hi)
-	client, err := NewTCPClient("127.0.0.1:4567", o)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	var reply string
-	done := make(chan struct{})
-	err = client.Go(context.TODO(), "hi.SayHello", "linda", &reply, done)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	<-done
-	if !strings.EqualFold(reply, "Hello linda") {
-		t.Fatal(reply)
-	}
-}
 */
 func TestClientClose(t *testing.T) {
 	Default()
@@ -160,38 +121,6 @@ func TestClientClose(t *testing.T) {
 [Debug] 2022-12-03 22:00:08 TCPServer.Run: TCP等待子协程关闭……
 [Debug] 2022-12-03 22:00:08 TCPServer.Run: TCPServer关闭。
 [Debug] 2022-12-03 22:00:13 TCPSession.tcpPing: 127.0.0.1:4567 stop
-*/
-func TestHijacker(t *testing.T) {
-	Default()
-	defer Stop()
-	oc := NewOptions(WithHijacker(func(data []byte, send WriterFunc) error {
-		log.Print("Client: ", string(data))
-		return nil
-	}))
-	os := NewOptions(WithHijacker(func(data []byte, send WriterFunc) error {
-		log.Print("Server: ", string(data))
-		HijackerSend([]byte("123456收到"), send)
-		return nil
-	}))
-	s := NewService(os)
-	s.TCPServer(":4567")
-	c, err := NewTCPClient("127.0.0.1:4567", oc)
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	defer c.Close()
-	HijackerSend([]byte("123456hi"), c.Send)
-	HijackerSend([]byte("123456jackey"), c.Send)
-	time.Sleep(250 * time.Millisecond)
-	s.Stop()
-	time.Sleep(1 * time.Second)
-}
-
-/*
-2022/12/03 22:00:37 Server: hi
-2022/12/03 22:00:37 Server: jackey
-2022/12/03 22:00:37 Client: 收到
-2022/12/03 22:00:37 Client: 收到
 */
 func TestClientHook(t *testing.T) {
 	Default()

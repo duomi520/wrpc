@@ -10,7 +10,7 @@ import (
 	"github.com/duomi520/utils"
 )
 
-//Client 连接
+// Client 连接
 type Client struct {
 	Options
 	callMap sync.Map
@@ -19,7 +19,7 @@ type Client struct {
 	stopSign *int32
 }
 
-//NewTCPClient 新建
+// NewTCPClient 新建
 func NewTCPClient(url string, o *Options) (*Client, error) {
 	c := &Client{
 		Options: *o,
@@ -29,7 +29,7 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := TCPDial(url, o.ProtocolMagicNumber, o.Hijacker, c.clientHandler, o.Logger)
+	t, err := TCPDial(url, o.ProtocolMagicNumber, c.clientHandler, o.Logger)
 	if err != nil {
 		return nil, err
 	}
@@ -47,13 +47,13 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 	return c, nil
 }
 
-//Close 关闭
+// Close 关闭
 func (c *Client) Close() {
 	atomic.StoreInt32(c.stopSign, 1)
 	c.send(frameGoaway)
 }
 
-//Send 发送
+// Send 发送
 func (c *Client) Send(b []byte) error {
 	return c.warpSend(b)
 }
@@ -90,7 +90,7 @@ type rpcResponse struct {
 
 var rpcResponsePool sync.Pool
 
-//rpcResponseGet 从池里取一个
+// rpcResponseGet 从池里取一个
 func rpcResponseGet() *rpcResponse {
 	v := rpcResponsePool.Get()
 	if v != nil {
@@ -102,15 +102,16 @@ func rpcResponseGet() *rpcResponse {
 	return &r
 }
 
-//rpcResponsePut 还一个到池里
+// rpcResponsePut 还一个到池里
 func rpcResponsePut(r *rpcResponse) {
 	r.client = nil
 	r.reply = nil
+	close(r.Done)
 	rpcResponsePool.Put(r)
 }
 
-//Call 调用指定的服务，方法，等待调用返回，将结果写入reply，然后返回执行的错误状态
-//request and response/请求-响应
+// Call 调用指定的服务，方法，等待调用返回，将结果写入reply，然后返回执行的错误状态
+// request and response/请求-响应
 func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any) error {
 	id, err := c.snowFlakeID.NextID()
 	if err != nil {
@@ -128,15 +129,9 @@ func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any
 	}
 	select {
 	case <-ctx.Done():
-		f := make([]byte, 18)
-		copy(f, frameCtxCancelFunc)
-		utils.CopyInteger64(f[6:], id)
-		c.send(f)
 		return ctx.Err()
 	case <-rc.Done:
 		err = rc.Error
-		//TODO 有泄露风险
-		close(rc.Done)
 		return err
 	}
 }
@@ -163,7 +158,7 @@ func (c *Client) Go(ctx context.Context, serviceMethod string, args, reply any, 
 	return c.sendFrame(ctx, utils.StatusRequest16, id, serviceMethod, args)
 }*/
 
-//NewStream
+// NewStream
 func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, error) {
 	id, err := c.snowFlakeID.NextID()
 	if err != nil {
@@ -204,13 +199,13 @@ func (c *Client) CloseStream(s *Stream) {
 	c.callMap.Delete(s.id)
 }
 
-//Subscribe 订阅主题
+// Subscribe 订阅主题
 func (c *Client) Subscribe(topic string, handler WriterFunc) error {
 	c.callMap.Store(topic, handler)
 	return c.sendFrame(context.TODO(), utils.StatusSubscribe16, c.Id, topic, nil)
 }
 
-//Unsubscribe 退订主题
+// Unsubscribe 退订主题
 func (c *Client) Unsubscribe(topic string) error {
 	c.callMap.Delete(topic)
 	return c.sendFrame(context.TODO(), utils.StatusUnsubscribe16, c.Id, topic, nil)

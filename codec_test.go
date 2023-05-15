@@ -12,8 +12,8 @@ func TestFrame(t *testing.T) {
 	var meta utils.MetaDict
 	meta.Set("charset", "utf-8")
 	var tests = []Frame{
-		{utils.StatusRequest16, 1, "wang", nil, "hi"},
-		{utils.StatusResponse16, 2, "劳动节5.1", &meta, "International Labour Day"},
+		{utils.StatusRequest16, 1, "wang", nil, "hi", nil},
+		{utils.StatusResponse16, 2, "劳动节5.1", &meta, "International Labour Day", nil},
 	}
 	buf := bufferPool.Get().(*buffer)
 	defer bufferPool.Put(buf)

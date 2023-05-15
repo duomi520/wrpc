@@ -15,10 +15,10 @@ func TestTCPDial(t *testing.T) {
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	h := func([]byte, WriterFunc, func()) error { return nil }
-	s := NewTCPServer(":4567", nil, h, logger)
+	s := NewTCPServer(":4567", h, logger)
 	defer s.Stop()
 	go s.Run()
-	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, nil, h, logger)
+	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,13 +44,13 @@ func TestTCPGracefulStop(t *testing.T) {
 	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
 	defer logger.Close()
 	h := func([]byte, WriterFunc, func()) error { return nil }
-	s := NewTCPServer(":4568", nil, h, logger)
+	s := NewTCPServer(":4568", h, logger)
 	go s.Run()
-	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, h, logger)
+	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, h, logger)
+	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestTCPEcho(t *testing.T) {
 		send(data)
 		return nil
 	}
-	s := NewTCPServer(":4568", nil, hs, logger)
+	s := NewTCPServer(":4568", hs, logger)
 	go s.Run()
 	hc := func(msg []byte, send WriterFunc, f func()) error {
 		n := int(utils.BytesToInteger32[uint32](msg[6:10]))
@@ -97,7 +97,7 @@ func TestTCPEcho(t *testing.T) {
 		}
 		return nil
 	}
-	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, nil, hc, logger)
+	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, hc, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

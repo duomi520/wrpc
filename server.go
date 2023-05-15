@@ -12,6 +12,11 @@ import (
 	"github.com/duomi520/utils"
 )
 
+// RPCContext 上下文
+type RPCContext struct {
+	Metadata *utils.MetaDict
+}
+
 type connect struct {
 	Id int64
 	//发送
@@ -22,7 +27,7 @@ func (c connect) equal(obj any) bool {
 	return c.Id == obj.(connect).Id
 }
 
-//MethodInfo 方法
+// MethodInfo 方法
 type MethodInfo struct {
 	nonblock  bool
 	method    reflect.Method
@@ -32,7 +37,7 @@ type MethodInfo struct {
 	stream    *Stream
 }
 
-//Service 服务端应答
+// Service 服务端应答
 type Service struct {
 	Options
 	tcpServer      *TCPServer
@@ -41,7 +46,7 @@ type Service struct {
 	topicMap       sync.Map
 }
 
-//NewService 新建
+// NewService 新建
 func NewService(o *Options) *Service {
 	return &Service{
 		Options:   *o,
@@ -49,13 +54,13 @@ func NewService(o *Options) *Service {
 	}
 }
 
-//TCPServer tcp服务
+// TCPServer tcp服务
 func (sh *Service) TCPServer(port string) error {
 	if len(port) < 1 {
 		return errors.New("Service.TCPServer: 端口号为空")
 
 	}
-	sh.tcpServer = NewTCPServer(port, sh.Hijacker, sh.serveRequest, sh.Logger)
+	sh.tcpServer = NewTCPServer(port, sh.serveRequest, sh.Logger)
 	if sh.tcpServer == nil {
 		return errors.New("Service.TCPServer: 启动TCP服务失败")
 	}
@@ -64,12 +69,12 @@ func (sh *Service) TCPServer(port string) error {
 	return nil
 }
 
-//Stop
+// Stop
 func (sh *Service) Stop() {
 	sh.tcpServer.Stop()
 }
 
-//RegisterTopic 注册主题
+// RegisterTopic 注册主题
 func (sh *Service) RegisterTopic(name string) *Topic {
 	t := Topic{
 		Service:      sh,
@@ -80,7 +85,7 @@ func (sh *Service) RegisterTopic(name string) *Topic {
 	return &t
 }
 
-//RemoveTopic 移除主题
+// RemoveTopic 移除主题
 func (sh *Service) RemoveTopic(name string) {
 	v, ok := sh.topicMap.Load(name)
 	if ok {
@@ -89,7 +94,8 @@ func (sh *Service) RemoveTopic(name string) {
 	}
 }
 
-//RegisterRPC 函数必须是导出的，即首字母为大写
+// RegisterRPC 函数必须是导出的，即首字母为大写
+// 函数阻塞会打断网络io
 func (sh *Service) RegisterRPC(target string, rcvr any) error {
 	t := reflect.TypeOf(rcvr)
 	val := reflect.ValueOf(rcvr)
@@ -154,12 +160,7 @@ func (sh *Service) functionCall(id int64, m *MethodInfo, meta *utils.MetaDict, p
 	}
 	params := make([]reflect.Value, 3)
 	params[0] = m.val
-	ctx, cancel := context.WithCancel(context.Background())
-	sh.ctxExitFuncMap.Store(id, cancel)
-	defer sh.ctxExitFuncMap.Delete(id)
-	if meta != nil {
-		ctx = context.WithValue(ctx, metadataKey, meta)
-	}
+	ctx := &RPCContext{Metadata: meta}
 	params[1] = reflect.ValueOf(ctx)
 	params[2] = args.Elem()
 	function := m.method.Func
@@ -237,7 +238,7 @@ func (sh *Service) sendResponse(f Frame, send WriterFunc) error {
 	return err
 }
 
-//serveRequest h
+// serveRequest h
 func (sh *Service) serveRequest(recv []byte, send WriterFunc, callback func()) error {
 	var f Frame
 	var n int
@@ -304,24 +305,19 @@ func (sh *Service) serveRequest(recv []byte, send WriterFunc, callback func()) e
 			err = sh.sendResponse(f, warpSend)
 			callback()
 		} else {
-			go func() {
-				defer func() {
-					callback()
-					buf, r := formatRecover()
-					if r != nil {
-						sh.Logger.Error(fmt.Sprintf("Service.serveRequest %s \n%s", r, buf))
-					}
-				}()
-				f.Payload, err = sh.functionCall(f.Seq, m, f.Metadata, recv[n:])
-				if err != nil {
-					sh.sendError(f, send, err)
-					return
+			var errCall error
+			f.Payload, errCall = sh.functionCall(f.Seq, m, f.Metadata, recv[n:])
+
+			if errCall != nil {
+				sh.sendError(f, send, errCall)
+
+			} else {
+				errCall = sh.sendResponse(f, warpSend)
+				if errCall != nil {
+					sh.Logger.Error(fmt.Sprintf("Service.serveRequest: 编码失败 %s", errCall.Error()))
 				}
-				err = sh.sendResponse(f, warpSend)
-				if err != nil {
-					sh.Logger.Error(fmt.Sprintf("Service.serveRequest: 编码失败 %s", err.Error()))
-				}
-			}()
+			}
+			callback()
 		}
 	}
 	return err

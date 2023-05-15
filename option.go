@@ -14,7 +14,7 @@ type WriterFunc func([]byte) error
 
 func doNothing() {}
 
-//Options 配置
+// Options 配置
 type Options struct {
 	ProtocolMagicNumber uint32
 	snowFlakeID         *utils.SnowFlakeID
@@ -22,8 +22,6 @@ type Options struct {
 	Marshal func(any, io.Writer) error
 	//解码器
 	Unmarshal func([]byte, any) error
-	//劫持者
-	Hijacker func([]byte, WriterFunc) error
 	//入口拦截器
 	IntletHook []func([]byte, WriterFunc) ([]byte, error)
 	//出口拦截器
@@ -39,10 +37,10 @@ type Options struct {
 	Logger utils.ILogger
 }
 
-//Option 选项赋值
+// Option 选项赋值
 type Option func(*Options)
 
-//NewOptions 创建并返回一个配置：接收Option函数类型的不定向参数列表
+// NewOptions 创建并返回一个配置：接收Option函数类型的不定向参数列表
 func NewOptions(opts ...Option) *Options {
 	o := Options{}
 	//设置默认值
@@ -68,7 +66,7 @@ func WithProtocolMagicNumber(pm uint32) Option {
 	}
 }
 
-//WithLogger 日志
+// WithLogger 日志
 func WithLogger(l utils.ILogger) Option {
 	return func(o *Options) {
 		o.Logger = l
@@ -79,7 +77,7 @@ func jsonMarshal(o any, w io.Writer) error {
 	return json.NewEncoder(w).Encode(o)
 }
 
-//WithCodec 编码
+// WithCodec 编码
 func WithCodec(m func(any, io.Writer) error, um func([]byte, any) error) Option {
 	return func(o *Options) {
 		if m != nil && um != nil {
@@ -89,18 +87,7 @@ func WithCodec(m func(any, io.Writer) error, um func([]byte, any) error) Option 
 	}
 }
 
-//WithHijacker 劫持者
-//部分option的设置失效，需自行实现，不能阻塞，只能传递[]byte
-func WithHijacker(h func([]byte, WriterFunc) error) Option {
-	return func(o *Options) {
-		if h == nil {
-			o.Logger.Fatal("WithHijacker：Hijacker is nil")
-		}
-		o.Hijacker = h
-	}
-}
-
-//WithIntletHook 入口拦截器
+// WithIntletHook 入口拦截器
 func WithIntletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	return func(o *Options) {
 		if len(chain) == 0 {
@@ -110,7 +97,7 @@ func WithIntletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	}
 }
 
-//WithOutletHook 出口拦截器
+// WithOutletHook 出口拦截器
 func WithOutletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	return func(o *Options) {
 		if len(chain) == 0 {
@@ -120,7 +107,7 @@ func WithOutletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
 	}
 }
 
-//WithBreaker 熔断器
+// WithBreaker 熔断器
 func WithBreaker(allow func() error, success, failed func()) Option {
 	return func(o *Options) {
 		if allow != nil && success != nil && failed != nil {

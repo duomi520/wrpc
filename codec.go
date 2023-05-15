@@ -3,6 +3,7 @@ package wrpc
 import (
 	"errors"
 	"io"
+	"net"
 
 	"github.com/duomi520/utils"
 )
@@ -25,6 +26,12 @@ func init() {
 	utils.CopyInteger16(frameCtxCancelFunc[14:16], uint16(18))
 	utils.CopyInteger16(frameCtxCancelFunc[16:18], uint16(18))
 }
+func MarshalBinaryFrameCtxCancelFunc(id int64) []byte {
+	f := make([]byte, 18)
+	copy(f, frameCtxCancelFunc)
+	utils.CopyInteger64(f[6:], id)
+	return f
+}
 
 /*
 +-------+-------+-------+-------+-------+-------+
@@ -42,19 +49,20 @@ func init() {
 +-------+-------+-------+-------+-------+-------+-------+-------+
 */
 
-//FrameMinLenght 长度
+// FrameMinLenght 长度
 const FrameMinLenght int = 18
 
-//Frame 帧
+// Frame 帧
 type Frame struct {
 	Status        uint16
 	Seq           int64
 	ServiceMethod string
 	Metadata      *utils.MetaDict
 	Payload       any
+	buf           net.Buffers
 }
 
-//MarshalBinary 编码
+// MarshalBinary 编码
 func (f Frame) MarshalBinary(marshal func(any, io.Writer) error, buf *buffer) error {
 	buf.reset()
 	d := buf.getbuf()
@@ -87,7 +95,7 @@ func (f Frame) MarshalBinary(marshal func(any, io.Writer) error, buf *buffer) er
 	return nil
 }
 
-//UnmarshalHeader 解码头部，Payload不解析，返会头长度及错误
+// UnmarshalHeader 解码头部，Payload不解析，返会头长度及错误
 func (f *Frame) UnmarshalHeader(data []byte) (int, error) {
 	if len(data) < FrameMinLenght {
 		return 0, errors.New("Frame.UnmarshalHeader：bytes is too short")
@@ -105,7 +113,7 @@ func (f *Frame) UnmarshalHeader(data []byte) (int, error) {
 	return int(MetadataEnd), nil
 }
 
-//GetPayload
+// GetPayload
 func GetPayload(unmarshal func([]byte, any) error, data []byte) (obj any) {
 	if len(data) < FrameMinLenght {
 		return nil
@@ -115,7 +123,7 @@ func GetPayload(unmarshal func([]byte, any) error, data []byte) (obj any) {
 	return obj
 }
 
-//GetStatus
+// GetStatus
 func GetStatus(data []byte) uint16 {
 	if len(data) < FrameMinLenght {
 		return utils.StatusUnknown16
@@ -123,19 +131,5 @@ func GetStatus(data []byte) uint16 {
 	return utils.BytesToInteger16[uint16](data[4:6])
 }
 
-/*
-+-------+-------+-------+-------+-------+-------+
-|           Lenght(32)          |   Status(16)  |
-+-------+-------+-------+-------+-------+-------+-------+-------+
-|                       Payload (0...)                         ...
-+-------+-------+-------+-------+-------+-------+-------+-------+
-*/
-
-//发送的[]byte前部需留 6 的空间
-func HijackerSend(data []byte, send WriterFunc) error {
-	utils.CopyInteger32(data[0:4], uint32(len(data)))
-	utils.CopyInteger16(data[4:6], utils.StatusHijacker16)
-	return send(data)
-}
-
 // https://www.jianshu.com/p/e57ca4fec26f  HTTP2 详解
+// https://blog.csdn.net/win_lin/article/details/72223168
