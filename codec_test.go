@@ -1,7 +1,9 @@
 package wrpc
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -9,48 +11,40 @@ import (
 )
 
 func TestFrame(t *testing.T) {
-	var meta utils.MetaDict
-	meta.Set("charset", "utf-8")
-	var tests = []Frame{
-		{utils.StatusRequest16, 1, "wang", nil, "hi", nil},
-		{utils.StatusResponse16, 2, "劳动节5.1", &meta, "International Labour Day", nil},
+	encoder := func(a any, w io.Writer) error {
+		return json.NewEncoder(w).Encode(a)
 	}
-	buf := bufferPool.Get().(*buffer)
-	defer bufferPool.Put(buf)
-	for i := range tests {
-		err := tests[i].MarshalBinary(jsonMarshal, buf)
+	var meta utils.MetaDict[string]
+	meta.Set("charset", "utf-8")
+	var frames = []Frame{
+		{utils.StatusRequest16, 1, utils.Hash64FNV1A("wang")},
+		{utils.StatusResponse16, 2, utils.Hash64FNV1A("劳动节5.1")},
+	}
+	var metas = []utils.MetaDict[string]{{}, meta}
+	var payloads = []string{"hi", "International Labour Day"}
+	for i := range frames {
+		var buf bytes.Buffer
+		err := FrameEncode(frames[i], metas[i], payloads[i], &buf, encoder)
 		if err != nil {
 			t.Fatal(err.Error())
 		}
-		data := buf.bytes()
-		f := &Frame{}
-		l, err := f.UnmarshalHeader(data)
+		data := buf.Bytes()
+		f, m, p, err := FrameUnmarshal(data, json.Unmarshal)
 		if err != nil {
 			t.Fatal(err.Error())
 		}
-		err = json.Unmarshal(data[l:], &f.Payload)
-		if err != nil {
-			t.Fatal(err.Error())
+		if f.Status != getStatus(data) {
+			t.Errorf("1 expected %d got %d", f.Status, getStatus(data))
 		}
-		if !strings.EqualFold(f.ServiceMethod, tests[i].ServiceMethod) {
-			t.Errorf("expected %s got %s", tests[i].ServiceMethod, f.ServiceMethod)
+		if !strings.EqualFold(payloads[i], p.(string)) {
+			t.Errorf("2 expected %s got %s", payloads[i], p.(string))
 		}
-		if !strings.EqualFold(f.Payload.(string), tests[i].Payload.(string)) {
-			t.Errorf("expected %s got %s", tests[i].Payload, f.Payload)
-		}
-		if !strings.EqualFold(GetPayload(json.Unmarshal, data).(string), tests[i].Payload.(string)) {
-			t.Errorf("expected %s got %s", tests[i].Payload.(string), GetPayload(json.Unmarshal, data).(string))
-		}
-		if tests[i].Status != GetStatus(data) {
-			t.Errorf("expected %d got %d", tests[i].Status, GetStatus(data))
-		}
-		if f.Metadata != nil {
+		if m.Len() != 0 {
 			expected, _ := meta.Get("charset")
-			got, _ := f.Metadata.Get("charset")
+			got, _ := m.Get("charset")
 			if !strings.EqualFold(expected, got) {
-				t.Errorf("expected %s got %s", expected, got)
+				t.Errorf("3 expected %s got %s", expected, got)
 			}
 		}
-
 	}
 }

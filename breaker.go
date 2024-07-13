@@ -20,9 +20,9 @@ const (
 //开启状态：服务异常，在该状态下，发起请求时会立即返回错误
 //半开启装态：这时熔断器只允许一个请求通过. 当该请求调用成功时, 熔断器恢复到关闭状态. 若该请求失败, 熔断器继续保持打开状态, 接下来的请求被禁止通过
 
-//CircuitBreaker 回路 SRE过载保护算法
-//降低 K 值会使自适应限流算法更加激进（允许客户端在算法启动时拒绝更多本地请求）
-//增加 K 值会使自适应限流算法不再那么激进（允许服务端在算法启动时尝试接收更多的请求，与上面相反）
+// CircuitBreaker 回路 SRE过载保护算法
+// 降低 K 值会使自适应限流算法更加激进（允许客户端在算法启动时拒绝更多本地请求）
+// 增加 K 值会使自适应限流算法不再那么激进（允许服务端在算法启动时尝试接收更多的请求，与上面相反）
 type CircuitBreaker struct {
 	r        *rand.Rand
 	randLock sync.Mutex
@@ -34,7 +34,7 @@ type CircuitBreaker struct {
 	state   int32
 }
 
-//NewCircuitBreakcer 新加回路
+// NewCircuitBreakcer 新加回路
 func NewCircuitBreaker(request int64, k float64) *CircuitBreaker {
 	b := &breakerRollingWindow{
 		//64*8.388608=536.870912 ms
@@ -88,7 +88,7 @@ func (c *CircuitBreaker) MarkFailed() {
 // 512个窗口 512*8,388,608=4,294,967,296 约4.3秒
 // 2^3=8,2^9=512,2^10=1024
 
-//breakerRollingWindow
+// breakerRollingWindow
 type breakerRollingWindow struct {
 	sum   [512]int64
 	count [512]int64

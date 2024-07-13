@@ -8,8 +8,6 @@ import (
 )
 
 func TestBroadcast(t *testing.T) {
-	Default()
-	defer Stop()
 	count := 0
 	var wg sync.WaitGroup
 	wg.Add(2)

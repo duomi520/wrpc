@@ -4,44 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/duomi520/utils"
 	"go/token"
+	"io"
 	"reflect"
 	"strings"
 	"sync"
-
-	"github.com/duomi520/utils"
 )
-
-// RPCContext 上下文
-type RPCContext struct {
-	Metadata *utils.MetaDict
-}
-
-type connect struct {
-	Id int64
-	//发送
-	send WriterFunc
-}
-
-func (c connect) equal(obj any) bool {
-	return c.Id == obj.(connect).Id
-}
-
-// MethodInfo 方法
-type MethodInfo struct {
-	nonblock  bool
-	method    reflect.Method
-	val       reflect.Value
-	argsType  reflect.Type
-	replyType reflect.Type
-	stream    *Stream
-}
 
 // Service 服务端应答
 type Service struct {
 	Options
 	tcpServer      *TCPServer
-	methodMap      map[string]*MethodInfo
 	ctxExitFuncMap sync.Map
 	topicMap       sync.Map
 }
@@ -49,8 +23,7 @@ type Service struct {
 // NewService 新建
 func NewService(o *Options) *Service {
 	return &Service{
-		Options:   *o,
-		methodMap: make(map[string]*MethodInfo, 256),
+		Options: *o,
 	}
 }
 
@@ -58,9 +31,12 @@ func NewService(o *Options) *Service {
 func (sh *Service) TCPServer(port string) error {
 	if len(port) < 1 {
 		return errors.New("Service.TCPServer: 端口号为空")
-
 	}
-	sh.tcpServer = NewTCPServer(port, sh.serveRequest, sh.Logger)
+	hander := sh.serveRequest
+	if sh.WarpHandler != nil {
+		hander = sh.WarpHandler(hander)
+	}
+	sh.tcpServer = NewTCPServer(sh.snowFlakeID, port, hander, sh.Logger)
 	if sh.tcpServer == nil {
 		return errors.New("Service.TCPServer: 启动TCP服务失败")
 	}
@@ -81,16 +57,17 @@ func (sh *Service) RegisterTopic(name string) *Topic {
 		Name:         name,
 		audienceList: utils.NewCopyOnWriteList(),
 	}
-	sh.topicMap.Store(name, &t)
+	sh.topicMap.Store(utils.Hash64FNV1A(name), &t)
 	return &t
 }
 
 // RemoveTopic 移除主题
 func (sh *Service) RemoveTopic(name string) {
-	v, ok := sh.topicMap.Load(name)
+	key := utils.Hash64FNV1A(name)
+	v, ok := sh.topicMap.Load(key)
 	if ok {
 		v.(*Topic).audienceList = nil
-		sh.topicMap.Delete(name)
+		sh.topicMap.Delete(key)
 	}
 }
 
@@ -138,7 +115,7 @@ func (sh *Service) RegisterRPC(target string, rcvr any) error {
 			}
 		}
 		key := target + "." + name
-		sh.methodMap[key] = &m
+		sh.methodMap[utils.Hash64FNV1A(key)] = &m
 	}
 	return nil
 }
@@ -147,13 +124,22 @@ func (sh *Service) RegisterRPC(target string, rcvr any) error {
 func isExportedOrBuiltinType(t reflect.Type) bool {
 	return token.IsExported(t.Name()) || t.PkgPath() == ""
 }
-func (sh *Service) SetNonblock(key string) {
-	m, ok := sh.methodMap[key]
-	if ok {
-		m.nonblock = true
+
+func directCall(ctx context.Context, m *MethodInfo, args any) (any, error) {
+	params := make([]reflect.Value, 3)
+	params[0] = m.val
+	params[1] = reflect.ValueOf(&RPCContext{Metadata: GetMeta(ctx)})
+	params[2] = reflect.ValueOf(args)
+	function := m.method.Func
+	returnValues := function.Call(params)
+	r := returnValues[0].Interface()
+	if err := returnValues[1].Interface(); err != nil {
+		return nil, err.(error)
 	}
+	return r, nil
 }
-func (sh *Service) functionCall(id int64, m *MethodInfo, meta *utils.MetaDict, payload []byte) (any, error) {
+
+func (sh *Service) functionCall(m *MethodInfo, meta utils.MetaDict[string], payload []byte) (any, error) {
 	args := reflect.New(m.argsType)
 	if err := sh.Unmarshal(payload, args.Interface()); err != nil {
 		return nil, err
@@ -173,23 +159,25 @@ func (sh *Service) functionCall(id int64, m *MethodInfo, meta *utils.MetaDict, p
 	}
 	return reply.Interface(), nil
 }
-func (sh *Service) functionStream(id int64, key string, meta *utils.MetaDict, payload []byte, send WriterFunc) error {
+func (sh *Service) functionStream(id int64, key uint64, meta utils.MetaDict[string], payload []byte, w io.Writer) error {
 	m, ok := sh.methodMap[key]
 	if !ok {
-		return fmt.Errorf("Service.functionStream: can't find service method %s", key)
+		return errors.New("Service.functionStream: can't find service method")
 	}
 	if m.stream == nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		sh.ctxExitFuncMap.Store(id, cancel)
-		m.stream = &Stream{ctx: ctx, id: id, serviceMethod: key, send: send, marshal: sh.Marshal, unmarshal: sh.Unmarshal}
+		m.stream = &Stream{ctx: ctx, encoder: sh.Encoder, unmarshal: sh.Unmarshal}
+		m.stream.id = id
+		m.stream.w = w
 		m.stream.payload = make(chan []byte, 16)
 		sh.methodMap[key] = m
-		if meta != nil {
-			m.stream.ctx = MetadataContext(m.stream.ctx, meta)
+		if meta.Len() != 0 {
+			m.stream.ctx = SetMeta(m.stream.ctx, meta)
 		}
 		go func() {
 			defer func() {
-				buf, r := formatRecover()
+				buf, r := utils.FormatRecover()
 				if r != nil {
 					sh.Logger.Error(fmt.Sprintf("Service.functionStream：异常拦截： %s \n%s", r, buf))
 				}
@@ -202,7 +190,7 @@ func (sh *Service) functionStream(id int64, key string, meta *utils.MetaDict, pa
 			returnValues := function.Call(params)
 			if err := returnValues[0].Interface(); err != nil {
 				if !strings.Contains(err.(error).Error(), "context canceled") {
-					sh.Logger.Error("Service.functionStream: ", err.(error).Error())
+					sh.Logger.Error("Service.functionStream: " + err.(error).Error())
 				}
 			}
 			m.stream.release()
@@ -216,111 +204,66 @@ func (sh *Service) functionStream(id int64, key string, meta *utils.MetaDict, pa
 	m.stream.payload <- buf
 	return nil
 }
-func (sh *Service) sendError(f Frame, send WriterFunc, err error) error {
+
+func (sh *Service) sendError(f Frame, w io.Writer, err error) error {
 	f.Status = utils.StatusError16
-	f.Payload = err.Error()
-	buf := bufferPool.Get().(*buffer)
-	defer bufferPool.Put(buf)
-	err = f.MarshalBinary(sh.Marshal, buf)
-	if err != nil {
+	e := FrameEncode(f, utils.MetaDict[string]{}, err.Error(), w, sh.Encoder)
+	if e != nil {
 		return fmt.Errorf("Service.sendError: 编码失败 %s: %w", err.Error(), err)
 	}
-	return send(buf.bytes())
-}
-func (sh *Service) sendResponse(f Frame, send WriterFunc) error {
-	f.Status = utils.StatusResponse16
-	buf := bufferPool.Get().(*buffer)
-	defer bufferPool.Put(buf)
-	err := f.MarshalBinary(sh.Marshal, buf)
-	if err == nil {
-		err = send(buf.bytes())
-	}
-	return err
+	return nil
 }
 
 // serveRequest h
-func (sh *Service) serveRequest(recv []byte, send WriterFunc, callback func()) error {
-	var f Frame
-	var n int
-	var err error
-	//入口拦截
-	for v := range sh.IntletHook {
-		if recv, err = sh.IntletHook[v](recv, send); err != nil {
-			f.UnmarshalHeader(recv)
-			sh.sendError(f, send, err)
-			sh.Logger.Warn(err.Error())
-			return nil
-		}
-	}
-	//出口拦截
-	warpSend := func(b []byte) error {
-		for v := range sh.OutletHook {
-			if b, err = sh.OutletHook[v](b, send); err != nil {
-				sh.Logger.Warn(err.Error())
-				return nil
-			}
-		}
-		return send(b)
-	}
-	if n, err = f.UnmarshalHeader(recv); err != nil {
-		callback()
+func (sh *Service) serveRequest(recv []byte, w io.Writer) error {
+	f, err := GetFrame(recv)
+	if err != nil {
 		return err
 	}
 	switch f.Status {
 	case utils.StatusSubscribe16:
-		v, ok := sh.topicMap.Load(f.ServiceMethod)
+		v, ok := sh.topicMap.Load(f.Method)
 		if ok {
-			v.(*Topic).add(f.Seq, warpSend)
+			v.(*Topic).add(f.Seq, w)
 		}
-		callback()
-		return nil
 	case utils.StatusUnsubscribe16:
-		v, ok := sh.topicMap.Load(f.ServiceMethod)
+		v, ok := sh.topicMap.Load(f.Method)
 		if ok {
 			v.(*Topic).remove(f.Seq)
 		}
-		callback()
-		return nil
 	case utils.StatusStream16:
-		callback()
-		return sh.functionStream(f.Seq, f.ServiceMethod, f.Metadata, recv[n:], warpSend)
+		meta, req, err := splitMetaPayload(recv)
+		if err != nil {
+			sh.sendError(f, w, err)
+			return err
+		}
+		return sh.functionStream(f.Seq, f.Method, meta, req, w)
 	case utils.StatusCtxCancelFunc16:
 		cancel, ok := sh.ctxExitFuncMap.Load(f.Seq)
 		if ok {
 			cancel.(context.CancelFunc)()
 			sh.ctxExitFuncMap.Delete(f.Seq)
 		}
-		callback()
-		return nil
 	default:
-		m, ok := sh.methodMap[f.ServiceMethod]
+		m, ok := sh.methodMap[f.Method]
 		if !ok {
-			return sh.sendError(f, send, fmt.Errorf("Service.serveRequest: can't find service method %s", f.ServiceMethod))
+			return sh.sendError(f, w, errors.New("Service.serveRequest: can't find service"))
 		}
-		if m.nonblock {
-			f.Payload, err = sh.functionCall(f.Seq, m, f.Metadata, recv[n:])
-			if err != nil {
-				return sh.sendError(f, send, err)
-			}
-			err = sh.sendResponse(f, warpSend)
-			callback()
-		} else {
-			var errCall error
-			f.Payload, errCall = sh.functionCall(f.Seq, m, f.Metadata, recv[n:])
-
-			if errCall != nil {
-				sh.sendError(f, send, errCall)
-
-			} else {
-				errCall = sh.sendResponse(f, warpSend)
-				if errCall != nil {
-					sh.Logger.Error(fmt.Sprintf("Service.serveRequest: 编码失败 %s", errCall.Error()))
-				}
-			}
-			callback()
+		meta, req, err := splitMetaPayload(recv)
+		if err != nil {
+			return sh.sendError(f, w, err)
+		}
+		resp, err := sh.functionCall(m, meta, req)
+		if err != nil {
+			return sh.sendError(f, w, err)
+		}
+		f.Status = utils.StatusResponse16
+		err = FrameEncode(f, utils.MetaDict[string]{}, resp, w, sh.Encoder)
+		if err != nil {
+			sh.Logger.Error(fmt.Sprintf("Service.serveRequest: 发送失败 %s", err.Error()))
 		}
 	}
-	return err
+	return nil
 }
 
 // https://github.com/golang/go/blob/master/src/net/rpc/server.go?name=release#227

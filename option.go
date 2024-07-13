@@ -3,29 +3,47 @@ package wrpc
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
+	"os"
+	"reflect"
 	"time"
 
 	"github.com/duomi520/utils"
 )
 
-var SnowFlakeStartupTime int64 = time.Date(2023, time.January, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+//依赖路径 option->codec->transort->tcp->server and client
 
-type WriterFunc func([]byte) error
+// SnowFlakeStartupTime
+var SnowFlakeStartupTime int64 = time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+
+// defaultProtocolMagicNumber 缺省协议头
+const defaultProtocolMagicNumber uint32 = 2299
 
 func doNothing() {}
+
+// MethodInfo 方法
+type MethodInfo struct {
+	method    reflect.Method
+	val       reflect.Value
+	argsType  reflect.Type
+	replyType reflect.Type
+	stream    *Stream
+}
 
 // Options 配置
 type Options struct {
 	ProtocolMagicNumber uint32
+	//ID生成器
 	snowFlakeID         *utils.SnowFlakeID
+	//本地服务
+	methodMap map[uint64]*MethodInfo
 	//编码器
-	Marshal func(any, io.Writer) error
+	Marshal func(any) ([]byte, error)
+	Encoder func(any, io.Writer) error
 	//解码器
 	Unmarshal func([]byte, any) error
-	//入口拦截器
-	IntletHook []func([]byte, WriterFunc) ([]byte, error)
-	//出口拦截器
-	OutletHook []func([]byte, WriterFunc) ([]byte, error)
+	//服务端拦截器
+	WarpHandler func(func([]byte, io.Writer) error) func([]byte, io.Writer) error
 	//熔断器
 	AllowRequest func() error
 	MarkSuccess  func()
@@ -34,7 +52,7 @@ type Options struct {
 	//Balancer func([]int) int
 	//Registry  IRegistry
 	//日志
-	Logger utils.ILogger
+	Logger *slog.Logger
 }
 
 // Option 选项赋值
@@ -46,8 +64,12 @@ func NewOptions(opts ...Option) *Options {
 	//设置默认值
 	o.ProtocolMagicNumber = defaultProtocolMagicNumber
 	o.snowFlakeID = utils.NewSnowFlakeID(0, SnowFlakeStartupTime)
-	o.Logger, _ = utils.NewWLogger(utils.FatalLevel, "")
-	o.Marshal = jsonMarshal
+	o.methodMap = make(map[uint64]*MethodInfo, 256)
+	o.Logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	o.Marshal = json.Marshal
+	o.Encoder = func(a any, w io.Writer) error {
+		return json.NewEncoder(w).Encode(a)
+	}
 	o.Unmarshal = json.Unmarshal
 	o.AllowRequest = func() error {
 		return nil
@@ -67,43 +89,20 @@ func WithProtocolMagicNumber(pm uint32) Option {
 }
 
 // WithLogger 日志
-func WithLogger(l utils.ILogger) Option {
+func WithLogger(l *slog.Logger) Option {
 	return func(o *Options) {
 		o.Logger = l
 	}
 }
 
-func jsonMarshal(o any, w io.Writer) error {
-	return json.NewEncoder(w).Encode(o)
-}
-
 // WithCodec 编码
-func WithCodec(m func(any, io.Writer) error, um func([]byte, any) error) Option {
+func WithCodec(m func(any) ([]byte, error), e func(any, io.Writer) error, um func([]byte, any) error) Option {
 	return func(o *Options) {
-		if m != nil && um != nil {
+		if m != nil && e != nil && um != nil {
 			o.Marshal = m
+			o.Encoder = e
 			o.Unmarshal = um
 		}
-	}
-}
-
-// WithIntletHook 入口拦截器
-func WithIntletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
-	return func(o *Options) {
-		if len(chain) == 0 {
-			o.Logger.Fatal("WithIntletHook：IntletHook is nil")
-		}
-		o.IntletHook = append(o.IntletHook, chain...)
-	}
-}
-
-// WithOutletHook 出口拦截器
-func WithOutletHook(chain ...func([]byte, WriterFunc) ([]byte, error)) Option {
-	return func(o *Options) {
-		if len(chain) == 0 {
-			o.Logger.Fatal("WithOutletHook：OutletHook is nil")
-		}
-		o.OutletHook = append(o.OutletHook, chain...)
 	}
 }
 
@@ -114,6 +113,15 @@ func WithBreaker(allow func() error, success, failed func()) Option {
 			o.AllowRequest = allow
 			o.MarkSuccess = success
 			o.MarkFailed = failed
+		}
+	}
+}
+
+// WithWarpHandler 服务端拦截器
+func WithWarpHandler(w func(func([]byte, io.Writer) error) func([]byte, io.Writer) error) Option {
+	return func(o *Options) {
+		if w != nil {
+			o.WarpHandler = w
 		}
 	}
 }

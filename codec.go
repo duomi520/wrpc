@@ -1,35 +1,31 @@
 package wrpc
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
-	"net"
 
 	"github.com/duomi520/utils"
 )
 
-var framePing, framePong, frameGoaway, frameCtxCancelFunc []byte
+var framePing, framePong, frameCtxCancelFunc []byte
 
 func init() {
 	framePing = make([]byte, 6)
 	framePong = make([]byte, 6)
-	frameGoaway = make([]byte, 6)
-	frameCtxCancelFunc = make([]byte, 18)
-	utils.CopyInteger32(framePing[0:4], uint32(6))
-	utils.CopyInteger32(framePong[0:4], uint32(6))
-	utils.CopyInteger32(frameGoaway[0:4], uint32(6))
-	utils.CopyInteger32(frameCtxCancelFunc[0:4], uint32(18))
-	utils.CopyInteger16(framePing[4:6], utils.StatusPing16)
-	utils.CopyInteger16(framePong[4:6], utils.StatusPong16)
-	utils.CopyInteger16(frameGoaway[4:6], utils.StatusGoaway16)
-	utils.CopyInteger16(frameCtxCancelFunc[4:6], utils.StatusCtxCancelFunc16)
-	utils.CopyInteger16(frameCtxCancelFunc[14:16], uint16(18))
-	utils.CopyInteger16(frameCtxCancelFunc[16:18], uint16(18))
+	frameCtxCancelFunc = make([]byte, 24)
+	binary.LittleEndian.PutUint32(framePing[0:4], uint32(6))
+	binary.LittleEndian.PutUint32(framePong[0:4], uint32(6))
+	binary.LittleEndian.PutUint32(frameCtxCancelFunc[0:4], uint32(24))
+	binary.LittleEndian.PutUint16(framePing[4:6], utils.StatusPing16)
+	binary.LittleEndian.PutUint16(framePong[4:6], utils.StatusPong16)
+	binary.LittleEndian.PutUint16(frameCtxCancelFunc[4:6], utils.StatusCtxCancelFunc16)
+	binary.LittleEndian.PutUint16(frameCtxCancelFunc[22:24], uint16(24))
 }
-func MarshalBinaryFrameCtxCancelFunc(id int64) []byte {
-	f := make([]byte, 18)
+func FrameCtxCancelFunc(id int64) []byte {
+	f := make([]byte, 24)
 	copy(f, frameCtxCancelFunc)
-	utils.CopyInteger64(f[6:], id)
+	binary.LittleEndian.PutUint64(f[6:], uint64(id))
 	return f
 }
 
@@ -37,99 +33,145 @@ func MarshalBinaryFrameCtxCancelFunc(id int64) []byte {
 +-------+-------+-------+-------+-------+-------+
 |           Lenght(32)          |   Status(16)  |
 +-------+-------+-------+-------+-------+-------+-------+-------+
-|                          Seq (64)                             |
+|                          Seq int64                            |
 +-------+-------+-------+-------+-------+-------+-------+-------+
-| ServiceMethodEnd(16)  |    MetadataEnd(16)    |				18
+|                       ServiceMethod uint64                    |
 +-------+-------+-------+-------+-------+-------+-------+-------+
-|                     ServiceMethod string                     ...
-+-------+-------+-------+-------+-------+-------+-------+-------+
-|                     Metadata map[any]any                     ...
+|MetadataEnd(16)|				   Metadata                    ...
 +-------+-------+-------+-------+-------+-------+-------+-------+
 |                       Payload (0...)                         ...
 +-------+-------+-------+-------+-------+-------+-------+-------+
 */
 
-// FrameMinLenght 长度
-const FrameMinLenght int = 18
-
 // Frame 帧
 type Frame struct {
-	Status        uint16
-	Seq           int64
-	ServiceMethod string
-	Metadata      *utils.MetaDict
-	Payload       any
-	buf           net.Buffers
+	Status uint16
+	Seq    int64
+	Method uint64
 }
 
-// MarshalBinary 编码
-func (f Frame) MarshalBinary(marshal func(any, io.Writer) error, buf *buffer) error {
-	buf.reset()
-	d := buf.getbuf()
-	lenght := 0
-	ServiceMethodEnd := 18 + uint16(len(f.ServiceMethod))
-	MetadataEnd := ServiceMethodEnd
-	//编码Metadata
-	if f.Metadata != nil {
-		var n int
-		var e error
-		n, e = f.Metadata.Encode(d[ServiceMethodEnd:])
-		if e != nil {
-			n, _ = f.Metadata.Encode(d[ServiceMethodEnd:])
-		}
-		MetadataEnd += uint16(n)
-	}
-	utils.CopyInteger32(d[0:4], uint32(lenght))
-	utils.CopyInteger16(d[4:6], f.Status)
-	utils.CopyInteger64(d[6:14], f.Seq)
-	utils.CopyInteger16(d[14:16], ServiceMethodEnd)
-	utils.CopyInteger16(d[16:18], MetadataEnd)
-	copy(d[18:ServiceMethodEnd], utils.StringToBytes(f.ServiceMethod))
-	//编码Payload
-	buf.setValid(int(MetadataEnd))
-	err := marshal(f.Payload, buf)
+func NewFrame(status uint16, seq int64, method string) (f Frame) {
+	f.Status = status
+	f.Seq = seq
+	f.Method = utils.Hash64FNV1A(method)
+	return f
+}
+
+func FrameEncode(f Frame, metadata utils.MetaDict[string], payload any, w io.Writer, encoder func(any, io.Writer) error) error {
+	buf := utils.AllocBuffer()
+	defer utils.FreeBuffer(buf)
+	var MetadataEnd uint16 = 24
+	//编码头部
+	var b0 [24]byte
+	binary.LittleEndian.PutUint16(b0[4:6], f.Status)
+	binary.LittleEndian.PutUint64(b0[6:14], uint64(f.Seq))
+	binary.LittleEndian.PutUint64(b0[14:22], f.Method)
+	binary.LittleEndian.PutUint16(b0[22:], MetadataEnd)
+	_, err := buf.Write(b0[:])
 	if err != nil {
 		return err
 	}
-	utils.CopyInteger32(d[0:4], uint32(buf.valid))
+	//编码Metadata
+	if metadata.Len() != 0 {
+		err = utils.MetaDictEncoder(metadata, buf)
+		if err != nil {
+			return err
+		}
+		binary.LittleEndian.PutUint16(buf.Bytes()[22:24], uint16(buf.Len()))
+	}
+	//编码Payload
+	err = encoder(payload, buf)
+	if err != nil {
+		return err
+	}
+	binary.LittleEndian.PutUint32(buf.Bytes()[0:4], uint32(buf.Len()))
+	io.Copy(w, buf)
 	return nil
 }
 
-// UnmarshalHeader 解码头部，Payload不解析，返会头长度及错误
-func (f *Frame) UnmarshalHeader(data []byte) (int, error) {
-	if len(data) < FrameMinLenght {
-		return 0, errors.New("Frame.UnmarshalHeader：bytes is too short")
+// FrameUnmarshal 解码
+func FrameUnmarshal(data []byte, unmarshal func([]byte, any) error) (Frame, utils.MetaDict[string], any, error) {
+	if len(data) < 24 {
+		return Frame{}, utils.MetaDict[string]{}, nil, errors.New("Frame.Get: bytes is too short")
 	}
-	f.Status = utils.BytesToInteger16[uint16](data[4:6])
-	f.Seq = utils.BytesToInteger64[int64](data[6:14])
-	ServiceMethodEnd := utils.BytesToInteger16[uint16](data[14:16])
-	MetadataEnd := utils.BytesToInteger16[uint16](data[16:18])
-	f.ServiceMethod = string(data[18:ServiceMethodEnd])
-	if ServiceMethodEnd != MetadataEnd {
-		var m utils.MetaDict
-		f.Metadata = &m
-		f.Metadata.Decode(data[ServiceMethodEnd:MetadataEnd])
+	var f Frame
+	f.Status = getStatus(data)
+	f.Seq = getSeq(data)
+	f.Method = binary.LittleEndian.Uint64(data[14:22])
+	metadataEnd := binary.LittleEndian.Uint16(data[22:24])
+	var obj any
+	err := unmarshal(data[metadataEnd:], &obj)
+	if err != nil {
+		return Frame{}, utils.MetaDict[string]{}, nil, err
 	}
-	return int(MetadataEnd), nil
+	if metadataEnd > 24 {
+		return f, utils.MetaDictDecode(data[24:metadataEnd]), obj, nil
+	}
+	return f, utils.MetaDict[string]{}, obj, nil
+}
+
+// GetFrame 解码帧，返会帧及错误
+func GetFrame(data []byte) (Frame, error) {
+	if len(data) < 24 {
+		return Frame{}, errors.New("Frame.GetFrame: bytes is too short")
+	}
+	var f Frame
+	f.Status = getStatus(data)
+	f.Seq = getSeq(data)
+	f.Method = binary.LittleEndian.Uint64(data[14:22])
+	return f, nil
+}
+
+// GetMetadata
+func GetMetadata(data []byte) (utils.MetaDict[string], error) {
+	if len(data) < 24 {
+		return utils.MetaDict[string]{}, errors.New("Frame.GetMetadata: bytes is too short")
+	}
+	metadataEnd := binary.LittleEndian.Uint16(data[22:24])
+	if metadataEnd > 24 {
+		return utils.MetaDictDecode(data[24:metadataEnd]), nil
+	}
+	return utils.MetaDict[string]{}, nil
 }
 
 // GetPayload
-func GetPayload(unmarshal func([]byte, any) error, data []byte) (obj any) {
-	if len(data) < FrameMinLenght {
-		return nil
+func GetPayload(data []byte, unmarshal func([]byte, any) error) (any, error) {
+	if len(data) < 24 {
+		return nil, errors.New("Frame.GetPayload: bytes is too short")
 	}
-	l := utils.BytesToInteger16[uint16](data[16:18])
-	unmarshal(data[l:], &obj)
-	return obj
+	metadataEnd := binary.LittleEndian.Uint16(data[22:24])
+	var obj any
+	err := unmarshal(data[metadataEnd:], &obj)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
 }
 
-// GetStatus
-func GetStatus(data []byte) uint16 {
-	if len(data) < FrameMinLenght {
-		return utils.StatusUnknown16
+// splitMetaPayload
+func splitMetaPayload(data []byte) (utils.MetaDict[string], []byte, error) {
+	if len(data) < 24 {
+		return utils.MetaDict[string]{}, nil, errors.New("Frame.splitMetaPayload: bytes is too short")
 	}
-	return utils.BytesToInteger16[uint16](data[4:6])
+	metadataEnd := binary.LittleEndian.Uint16(data[22:24])
+	if metadataEnd < 24 {
+		return utils.MetaDict[string]{}, nil, errors.New("Frame.splitMetaPayload: metadataEnd is too short")
+	}
+	return utils.MetaDictDecode(data[24:metadataEnd]), data[metadataEnd:], nil
+}
+
+// getStatus
+func getStatus(data []byte) uint16 {
+	return binary.LittleEndian.Uint16(data[4:6])
+}
+
+// getLen
+func getLen(data []byte) int {
+	return int(binary.LittleEndian.Uint32(data[:4]))
+}
+
+func getSeq(data []byte) int64 {
+	return int64(binary.LittleEndian.Uint64(data[6:14]))
 }
 
 // https://www.jianshu.com/p/e57ca4fec26f  HTTP2 详解
-// https://blog.csdn.net/win_lin/article/details/72223168

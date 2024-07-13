@@ -1,8 +1,13 @@
 package wrpc
 
 import (
+	"encoding/binary"
+	"io"
+	"log/slog"
+
+	//"net"
+
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,85 +15,92 @@ import (
 )
 
 func TestTCPDial(t *testing.T) {
-	Default()
-	defer Stop()
-	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
-	defer logger.Close()
-	h := func([]byte, WriterFunc, func()) error { return nil }
-	s := NewTCPServer(":4567", h, logger)
-	defer s.Stop()
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	h := func([]byte, io.Writer) error { return nil }
+	s := NewTCPServer(utils.NewSnowFlakeID(0, SnowFlakeStartupTime), ":4567", h, slog.Default())
 	go s.Run()
-	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, h, logger)
+	c, err := TCPDial("127.0.0.1:4567", defaultProtocolMagicNumber, h, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	atomic.StoreInt32(c.stopSign, 1)
-	c.Send(frameGoaway)
-	time.Sleep(1 * time.Second)
+	c.close()
+	time.Sleep(time.Second)
+	s.Stop()
+	time.Sleep(time.Second)
 }
 
 /*
-[Debug] 2022-12-03 22:02:27 TCPServer.Run：TCP监听端口:4567
-[Debug] 2022-12-03 22:02:27 TCPServer.Run：TCP已初始化连接，等待客户端连接……
-[Debug] 2022-12-03 22:02:27 TCPSession.tcpClientReceive: 127.0.0.1:4567 stop
-[Debug] 2022-12-03 22:02:27 TCPSession.tcpServerReceive: 127.0.0.1:61018 stop
-[Debug] 2022-12-03 22:02:28 TCPServer.Run: TCP等待子协程关闭……
-[Debug] 2022-12-03 22:02:28 TCPServer.Run: TCPServer关闭。
-[Debug] 2022-12-03 22:02:28 TCPServer.Stop：TCP监听端口关闭。
+2024/07/13 20:32:09 DEBUG TCPServer.Run:TCP监听端口 :4567
+2024/07/13 20:32:09 DEBUG TCPSession.tcpClientSend:127.0.0.1:4567 开启
+2024/07/13 20:32:09 DEBUG TCPServer.Run:TCP已初始化连接,等待客户端连接……
+2024/07/13 20:32:09 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4567 开启
+2024/07/13 20:32:09 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51564 开启
+2024/07/13 20:32:09 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4567 关闭
+2024/07/13 20:32:09 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51564 关闭
+2024/07/13 20:32:09 DEBUG TCPSession.tcpClientSend:127.0.0.1:4567 关闭
+2024/07/13 20:32:10 DEBUG TCPServer.Stop:TCP监听端口关闭
+2024/07/13 20:32:10 DEBUG TCPServer.Run:TCPServer停止接受新连接,等待子协程关闭……
+2024/07/13 20:32:10 DEBUG TCPServer.Run:TCPServer关闭
 */
 
 func TestTCPGracefulStop(t *testing.T) {
-	Default()
-	defer Stop()
-	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
-	defer logger.Close()
-	h := func([]byte, WriterFunc, func()) error { return nil }
-	s := NewTCPServer(":4568", h, logger)
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+	h := func([]byte, io.Writer) error { return nil }
+	s := NewTCPServer(utils.NewSnowFlakeID(1, SnowFlakeStartupTime), ":4568", h, slog.Default())
 	go s.Run()
-	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
+	_, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, logger)
+	_, err = TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, h, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(250 * time.Millisecond)
 	s.Stop()
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
 }
 
 /*
-[Debug] 2022-12-03 22:02:47 TCPServer.Run：TCP监听端口:4568
-[Debug] 2022-12-03 22:02:47 TCPServer.Run：TCP已初始化连接，等待客户端连接……
-[Debug] 2022-12-03 22:02:48 TCPServer.Stop：TCP监听端口关闭。
-[Debug] 2022-12-03 22:02:48 TCPServer.Run: TCP等待子协程关闭……
-[Debug] 2022-12-03 22:02:52 TCPSession.tcpClientReceive: 127.0.0.1:4568 stop
-[Debug] 2022-12-03 22:02:52 TCPSession.tcpServerReceive: 127.0.0.1:61024 stop
-[Debug] 2022-12-03 22:02:53 TCPSession.tcpServerReceive: 127.0.0.1:61025 stop
-[Debug] 2022-12-03 22:02:53 TCPSession.tcpClientReceive: 127.0.0.1:4568 stop
-[Debug] 2022-12-03 22:02:53 TCPServer.Run: TCPServer关闭。
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientSend:127.0.0.1:4568 开启
+2024/07/13 20:32:33 DEBUG TCPServer.Run:TCP监听端口 :4568
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4568 开启
+2024/07/13 20:32:33 DEBUG TCPServer.Run:TCP已初始化连接,等待客户端连接……
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientSend:127.0.0.1:4568 开启
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4568 开启
+2024/07/13 20:32:33 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51573 开启
+2024/07/13 20:32:33 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51574 开启
+2024/07/13 20:32:33 DEBUG TCPServer.Stop:TCP监听端口关闭
+2024/07/13 20:32:33 DEBUG TCPServer.Run:TCPServer停止接受新连接,等待子协程关闭……
+2024/07/13 20:32:33 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51573 关闭
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4568 关闭
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientSend:127.0.0.1:4568 关闭
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4568 关闭
+2024/07/13 20:32:33 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51574 关闭
+2024/07/13 20:32:33 DEBUG TCPSession.tcpClientSend:127.0.0.1:4568 关闭
+2024/07/13 20:32:33 DEBUG TCPServer.Run:TCPServer关闭
 */
+
 func TestTCPEcho(t *testing.T) {
-	Default()
-	defer Stop()
-	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
-	defer logger.Close()
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	var num, count int
 	//50000
 	loop := 50000
 	stop := make(chan struct{})
-	hs := func(msg []byte, send WriterFunc, f func()) error {
+	hs := func(msg []byte, w io.Writer) error {
 		data := make([]byte, len(msg))
 		copy(data, msg)
-		send(data)
+		_, err := w.Write(data)
+		if err != nil {
+			t.Fatal(err.Error())
+		}
 		return nil
 	}
-	s := NewTCPServer(":4568", hs, logger)
+	s := NewTCPServer(utils.NewSnowFlakeID(1, SnowFlakeStartupTime), ":4568", hs, slog.Default())
 	go s.Run()
-	hc := func(msg []byte, send WriterFunc, f func()) error {
-		n := int(utils.BytesToInteger32[uint32](msg[6:10]))
+	hc := func(msg []byte, w io.Writer) error {
+		n := int(binary.LittleEndian.Uint32(msg[6:10]))
 		num++
 		count += n
 		if num == loop {
@@ -97,36 +109,40 @@ func TestTCPEcho(t *testing.T) {
 		}
 		return nil
 	}
-	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, hc, logger)
+	c, err := TCPDial("127.0.0.1:4568", defaultProtocolMagicNumber, hc, slog.Default())
 	if err != nil {
 		t.Fatal(err)
 	}
 	data := make([]byte, 10)
-	utils.CopyInteger32(data[0:4], uint32(10))
+	binary.LittleEndian.PutUint32(data[0:4], uint32(10))
 	for i := 0; i < loop; i++ {
-		utils.CopyInteger32(data[6:10], uint32(i))
-		c.Send(data)
+		binary.LittleEndian.PutUint32(data[6:10], uint32(i))
+		buf := make([]byte, 10)
+		copy(buf, data)
+		c.writeWithDeadline(5*time.Second, buf)
 	}
 	<-stop
 	time.Sleep(250 * time.Millisecond)
 	s.Stop()
-	atomic.StoreInt32(c.stopSign, 1)
-	time.Sleep(5 * time.Second)
+	time.Sleep(3 * time.Second)
 	if count != (loop-1)*loop/2 {
-		logger.Debug(strconv.Itoa(count), " <> ", strconv.Itoa((loop-1)*loop/2))
-		t.Fatal("count err")
+		slog.Debug(strconv.Itoa(count) + " <> " + strconv.Itoa((loop-1)*loop/2))
+		t.Fatal("计算结果错误")
 	}
-	logger.Debug(strconv.Itoa(count), " = ", strconv.Itoa((loop-1)*loop/2))
+	slog.Debug(strconv.Itoa(count) + " = " + strconv.Itoa((loop-1)*loop/2))
 }
 
 /*
-[Debug] 2022-12-03 22:03:03 TCPServer.Run：TCP监听端口:4568
-[Debug] 2022-12-03 22:03:03 TCPServer.Run：TCP已初始化连接，等待客户端连接……
-[Debug] 2022-12-03 22:03:04 TCPServer.Run: TCP等待子协程关闭……
-[Debug] 2022-12-03 22:03:04 TCPServer.Stop：TCP监听端口关闭。
-[Debug] 2022-12-03 22:03:08 TCPSession.tcpPing: 127.0.0.1:4568 stop
-[Debug] 2022-12-03 22:03:08 TCPSession.tcpClientReceive: 127.0.0.1:4568 stop
-[Debug] 2022-12-03 22:03:08 TCPSession.tcpServerReceive: 127.0.0.1:61029 stop
-[Debug] 2022-12-03 22:03:08 TCPServer.Run: TCPServer关闭。
-[Debug] 2022-12-03 22:03:09 1249975000 = 1249975000
+2024/07/13 20:32:51 DEBUG TCPServer.Run:TCP监听端口 :4568
+2024/07/13 20:32:51 DEBUG TCPServer.Run:TCP已初始化连接,等待客户端连接……
+2024/07/13 20:32:51 DEBUG TCPSession.tcpClientSend:127.0.0.1:4568 开启
+2024/07/13 20:32:51 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4568 开启
+2024/07/13 20:32:51 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51585 开启
+2024/07/13 20:32:52 DEBUG TCPServer.Stop:TCP监听端口关闭
+2024/07/13 20:32:52 DEBUG TCPServer.Run:TCPServer停止接受新连接,等待子协程关闭……
+2024/07/13 20:32:52 DEBUG TCPSession.tcpServerReceive:127.0.0.1:51585 关闭
+2024/07/13 20:32:52 DEBUG TCPSession.tcpClientReceive:127.0.0.1:4568 关闭
+2024/07/13 20:32:52 DEBUG TCPServer.Run:TCPServer关闭
+2024/07/13 20:32:52 DEBUG TCPSession.tcpClientSend:127.0.0.1:4568 关闭
+2024/07/13 20:32:55 DEBUG 1249975000 = 1249975000
 */

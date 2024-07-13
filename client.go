@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
-	"sync/atomic"
 
 	"github.com/duomi520/utils"
 )
@@ -14,9 +14,9 @@ import (
 type Client struct {
 	Options
 	callMap sync.Map
-	connect
-	warpSend WriterFunc
+	Conn
 	stopSign *int32
+	Close    func()
 }
 
 // NewTCPClient 新建
@@ -25,7 +25,7 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 		Options: *o,
 	}
 	var err error
-	c.Id, err = o.snowFlakeID.NextID()
+	c.id, err = o.snowFlakeID.NextID()
 	if err != nil {
 		return nil, err
 	}
@@ -33,46 +33,20 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.send = t.Send
-	c.warpSend = func(b []byte) error {
-		for v := range o.OutletHook {
-			if b, err = o.OutletHook[v](b, t.Send); err != nil {
-				c.Logger.Warn(err.Error())
-				return nil
-			}
-		}
-		return t.Send(b)
-	}
-	c.stopSign = t.stopSign
+	c.w = t.conn
+	c.stopSign = &t.stopFlag
+	c.Close = t.close
 	return c, nil
 }
 
-// Close 关闭
-func (c *Client) Close() {
-	atomic.StoreInt32(c.stopSign, 1)
-	c.send(frameGoaway)
-}
-
-// Send 发送
-func (c *Client) Send(b []byte) error {
-	return c.warpSend(b)
-}
-
 func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, serviceMethod string, args any) error {
-	f := Frame{Status: status, Seq: seq, ServiceMethod: serviceMethod, Payload: args}
-	if v := ctx.Value(metadataKey); v != nil {
-		f.Metadata = v.(*utils.MetaDict)
-	}
-	buf := bufferPool.Get().(*buffer)
-	defer bufferPool.Put(buf)
-	var err error
-	if err = f.MarshalBinary(c.Marshal, buf); err != nil {
+	if err := c.AllowRequest(); err != nil {
 		return err
 	}
-	if err = c.AllowRequest(); err != nil {
-		return err
-	}
-	if err = c.warpSend(buf.bytes()); err != nil {
+	f := NewFrame(status, seq, serviceMethod)
+	meta := GetMeta(ctx)
+	err := FrameEncode(f, meta, args, c.w, c.Encoder)
+	if err != nil {
 		c.MarkFailed()
 	} else {
 		c.MarkSuccess()
@@ -88,41 +62,33 @@ type rpcResponse struct {
 	Error  error
 }
 
-var rpcResponsePool sync.Pool
-
-// rpcResponseGet 从池里取一个
-func rpcResponseGet() *rpcResponse {
-	v := rpcResponsePool.Get()
-	if v != nil {
-		v.(*rpcResponse).Done = make(chan struct{})
-		return v.(*rpcResponse)
-	}
-	var r rpcResponse
-	r.Done = make(chan struct{})
-	return &r
-}
-
-// rpcResponsePut 还一个到池里
-func rpcResponsePut(r *rpcResponse) {
-	r.client = nil
-	r.reply = nil
-	close(r.Done)
-	rpcResponsePool.Put(r)
-}
-
 // Call 调用指定的服务，方法，等待调用返回，将结果写入reply，然后返回执行的错误状态
 // request and response/请求-响应
 func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any) error {
+	// 先判断是否本机有提供服务，有，先本机。
+	if v, ok := c.methodMap[utils.Hash64FNV1A(serviceMethod)]; ok {
+		r, err := directCall(ctx, v, args)
+		//TODO 不合理，待优化
+		if err == nil {
+			buf, ex := c.Marshal(r)
+			if ex == nil {
+				return c.Unmarshal(buf, reply)
+			}
+			return ex
+		}
+		return err
+	}
 	id, err := c.snowFlakeID.NextID()
 	if err != nil {
 		return err
 	}
-	rc := rpcResponseGet()
+	rc := AllocRPCResponse()
+	defer FreeRPCResponse(rc)
 	rc.id = id
 	rc.client = c
 	rc.reply = reply
 	c.callMap.Store(id, rc)
-	defer rpcResponsePut(rc)
+	defer c.callMap.Delete(id)
 	err = c.sendFrame(ctx, utils.StatusRequest16, id, serviceMethod, args)
 	if err != nil {
 		return err
@@ -141,7 +107,6 @@ func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any
 /*
 //Go Go异步的调用函数。 待定
 func (c *Client) Go(ctx context.Context, serviceMethod string, args, reply any, done chan struct{}) error {
-	//TODO　ctx.Done 起作用
 	id, err := c.snowFlakeID.NextID()
 	if err != nil {
 		return err
@@ -164,28 +129,17 @@ func (c *Client) NewStream(ctx context.Context, serviceMethod string) (*Stream, 
 	if err != nil {
 		return nil, fmt.Errorf("Client.NewStream: snowFlake id fail %s", err.Error())
 	}
-	s := &Stream{ctx: ctx, id: id, serviceMethod: serviceMethod, marshal: c.Marshal, unmarshal: c.Unmarshal, send: c.send}
+	s := &Stream{ctx: ctx, serviceMethod: serviceMethod, encoder: c.Encoder, unmarshal: c.Unmarshal}
+	s.id = id
+	s.w = c.w
 	s.payload = make(chan []byte, 16)
 	c.callMap.Store(id, s)
 	//首次发送metadata
-	f := Frame{
-		Status:        utils.StatusStream16,
-		Seq:           id,
-		ServiceMethod: serviceMethod,
-		Payload:       nil,
-	}
-	if v := GetMetadata(ctx); v != nil {
-		f.Metadata = v
-	}
-	buf := bufferPool.Get().(*buffer)
-	defer bufferPool.Put(buf)
-	err = f.MarshalBinary(s.marshal, buf)
+	f := NewFrame(utils.StatusStream16, id, serviceMethod)
+	meta := GetMeta(ctx)
+	err = FrameEncode(f, meta, nil, s.w, s.encoder)
 	if err != nil {
 		return nil, fmt.Errorf("Client.NewStream: 编码失败 %s", err.Error())
-	}
-	err = c.send(buf.bytes())
-	if err != nil {
-		return nil, fmt.Errorf("Client.NewStream: %s", err.Error())
 	}
 	go func() {
 		<-ctx.Done()
@@ -200,29 +154,24 @@ func (c *Client) CloseStream(s *Stream) {
 }
 
 // Subscribe 订阅主题
-func (c *Client) Subscribe(topic string, handler WriterFunc) error {
-	c.callMap.Store(topic, handler)
-	return c.sendFrame(context.TODO(), utils.StatusSubscribe16, c.Id, topic, nil)
+func (c *Client) Subscribe(topic string, handler func([]byte) error) error {
+	c.callMap.Store(utils.Hash64FNV1A(topic), handler)
+	return c.sendFrame(context.TODO(), utils.StatusSubscribe16, c.id, topic, nil)
 }
 
 // Unsubscribe 退订主题
 func (c *Client) Unsubscribe(topic string) error {
-	c.callMap.Delete(topic)
-	return c.sendFrame(context.TODO(), utils.StatusUnsubscribe16, c.Id, topic, nil)
+	c.callMap.Delete(utils.Hash64FNV1A(topic))
+	return c.sendFrame(context.TODO(), utils.StatusUnsubscribe16, c.id, topic, nil)
 }
 
-func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) error {
-	var f Frame
-	var n int
-	var err error
-	//入口拦截
-	for v := range c.IntletHook {
-		if recv, err = c.IntletHook[v](recv, send); err != nil {
-			c.Logger.Warn(err.Error())
-			return nil
-		}
+func (c *Client) clientHandler(recv []byte, w io.Writer) error {
+	f, err := GetFrame(recv)
+	if err != nil {
+		return err
 	}
-	if n, err = f.UnmarshalHeader(recv); err != nil {
+	_, req, err := splitMetaPayload(recv)
+	if err != nil {
 		return err
 	}
 	switch f.Status {
@@ -230,8 +179,7 @@ func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) er
 		v, ok := c.callMap.Load(f.Seq)
 		if ok {
 			rc := v.(*rpcResponse)
-			err = c.Unmarshal(recv[n:], rc.reply)
-			rc.Error = err
+			rc.Error = c.Unmarshal(req, rc.reply)
 			rc.Done <- struct{}{}
 			c.callMap.Delete(f.Seq)
 		}
@@ -240,7 +188,7 @@ func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) er
 		if ok {
 			rc := v.(*rpcResponse)
 			var msg string
-			err = c.Unmarshal(recv[n:], &msg)
+			err = c.Unmarshal(req, &msg)
 			if err != nil {
 				rc.Error = err
 			} else {
@@ -250,11 +198,11 @@ func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) er
 			c.callMap.Delete(f.Seq)
 		}
 	case utils.StatusBroadcast16:
-		v, ok := c.callMap.Load(f.ServiceMethod)
+		v, ok := c.callMap.Load(f.Method)
 		if ok {
-			handler := v.(WriterFunc)
+			handler := v.(func([]byte) error)
 			var data []byte
-			err = c.Unmarshal(recv[n:], &data)
+			err = c.Unmarshal(req, &data)
 			if err != nil {
 				return err
 			}
@@ -263,16 +211,16 @@ func (c *Client) clientHandler(recv []byte, send WriterFunc, callback func()) er
 				return err
 			}
 		} else {
-			return fmt.Errorf("Client.clientHandler：broadcast no found f.ServiceMethod with %s", f.ServiceMethod)
+			return fmt.Errorf("Client.clientHandler: broadcast no found f.ServiceMethod")
 		}
 	case utils.StatusStream16:
 		v, ok := c.callMap.Load(f.Seq)
 		if ok {
-			buf := make([]byte, len(recv[n:]))
-			copy(buf, recv[n:])
+			buf := make([]byte, len(req))
+			copy(buf, req)
 			v.(*Stream).payload <- buf
 		} else {
-			return fmt.Errorf("Client.clientHandler：stream no found f.Seq with %d", f.Seq)
+			return fmt.Errorf("Client.clientHandler: stream no found f.Seq with %d", f.Seq)
 		}
 	}
 	return nil

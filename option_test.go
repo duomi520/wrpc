@@ -1,14 +1,14 @@
 package wrpc
 
 import (
+	"log/slog"
+	"os"
 	"reflect"
 	"testing"
-
-	"github.com/duomi520/utils"
 )
 
 func TestOptions(t *testing.T) {
-	logger, _ := utils.NewWLogger(utils.DebugLevel, "")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	o1 := NewOptions(WithLogger(logger))
 	o2 := NewOptions()
 	if reflect.ValueOf(o1.Logger).IsNil() || reflect.ValueOf(o2.Logger).IsNil() {
