@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -19,8 +20,6 @@ var SnowFlakeStartupTime int64 = time.Date(2024, time.January, 1, 0, 0, 0, 0, ti
 // defaultProtocolMagicNumber 缺省协议头
 const defaultProtocolMagicNumber uint32 = 2299
 
-func doNothing() {}
-
 // MethodInfo 方法
 type MethodInfo struct {
 	method    reflect.Method
@@ -34,7 +33,7 @@ type MethodInfo struct {
 type Options struct {
 	ProtocolMagicNumber uint32
 	//ID生成器
-	snowFlakeID         *utils.SnowFlakeID
+	snowFlakeID *utils.SnowFlakeID
 	//本地服务
 	methodMap map[uint64]*MethodInfo
 	//编码器
@@ -44,13 +43,8 @@ type Options struct {
 	Unmarshal func([]byte, any) error
 	//服务端拦截器
 	WarpHandler func(func([]byte, io.Writer) error) func([]byte, io.Writer) error
-	//熔断器
-	AllowRequest func() error
-	MarkSuccess  func()
-	MarkFailed   func()
-	//平衡器
-	//Balancer func([]int) int
-	//Registry  IRegistry
+	//客服端包装发送
+	WarpSend func(func(context.Context, Frame, any) error) func(context.Context, Frame, any) error
 	//日志
 	Logger *slog.Logger
 }
@@ -71,11 +65,6 @@ func NewOptions(opts ...Option) *Options {
 		return json.NewEncoder(w).Encode(a)
 	}
 	o.Unmarshal = json.Unmarshal
-	o.AllowRequest = func() error {
-		return nil
-	}
-	o.MarkSuccess = doNothing
-	o.MarkFailed = doNothing
 	for _, v := range opts {
 		v(&o)
 	}
@@ -106,17 +95,6 @@ func WithCodec(m func(any) ([]byte, error), e func(any, io.Writer) error, um fun
 	}
 }
 
-// WithBreaker 熔断器
-func WithBreaker(allow func() error, success, failed func()) Option {
-	return func(o *Options) {
-		if allow != nil && success != nil && failed != nil {
-			o.AllowRequest = allow
-			o.MarkSuccess = success
-			o.MarkFailed = failed
-		}
-	}
-}
-
 // WithWarpHandler 服务端拦截器
 func WithWarpHandler(w func(func([]byte, io.Writer) error) func([]byte, io.Writer) error) Option {
 	return func(o *Options) {
@@ -126,25 +104,11 @@ func WithWarpHandler(w func(func([]byte, io.Writer) error) func([]byte, io.Write
 	}
 }
 
-/*
-//WithRegistry 服务的注册和发现
-func WithRegistry(ctx context.Context, info NodeInfo, r IRegistry) Option {
+// WarpSend 客服端包装发送
+func WarpSend(s func(func(context.Context, Frame, any) error) func(context.Context, Frame, any) error) Option {
 	return func(o *Options) {
-		o.Registry = r
-		buf, err := json.Marshal(info)
-		if err != nil {
-			panic(err.Error())
-		}
-		err = r.Registry(buf)
-		if err != nil {
-			panic(err.Error())
-		}
-		if len(info.TCPPort) > 0 {
-			o.tcpServer = NewTCPServer(ctx, info.TCPPort, o.serveRequest, o.Logger)
-			go o.tcpServer.Run()
+		if s != nil {
+			o.WarpSend = s
 		}
 	}
 }
-*/
-
-// https://mp.weixin.qq.com/s/EvkMQCPwg-B0fZonpwXodg

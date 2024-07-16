@@ -1,6 +1,7 @@
 package wrpc
 
 import (
+	"context"
 	"errors"
 	"math"
 	"math/rand"
@@ -139,6 +140,22 @@ func (b *breakerRollingWindow) history() (success, total int64) {
 		}
 	}
 	return success, total
+}
+
+func (c *CircuitBreaker) Breaker(proto func(context.Context, Frame, any) error) func(context.Context, Frame, any) error {
+	return func(ctx context.Context, f Frame, args any) error {
+		var err error
+		if err = c.AllowRequest(); err != nil {
+			return err
+		}
+		err = proto(ctx, f, args)
+		if err != nil {
+			c.MarkFailed()
+		} else {
+			c.MarkSuccess()
+		}
+		return err
+	}
 }
 
 // https://mp.weixin.qq.com/s/DGRnUhyv6SS_E36ZQKGpPA

@@ -13,7 +13,8 @@ import (
 // Client 连接
 type Client struct {
 	Options
-	callMap sync.Map
+	callMap       sync.Map
+	warpSendFrame func(context.Context, Frame, any) error
 	Conn
 	stopSign *int32
 	Close    func()
@@ -33,25 +34,19 @@ func NewTCPClient(url string, o *Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if o.WarpSend == nil {
+		c.warpSendFrame = c.sendFrame
+	} else {
+		c.warpSendFrame = o.WarpSend(c.sendFrame)
+	}
 	c.w = t.conn
 	c.stopSign = &t.stopFlag
 	c.Close = t.close
 	return c, nil
 }
 
-func (c *Client) sendFrame(ctx context.Context, status uint16, seq int64, serviceMethod string, args any) error {
-	if err := c.AllowRequest(); err != nil {
-		return err
-	}
-	f := NewFrame(status, seq, serviceMethod)
-	meta := GetMeta(ctx)
-	err := FrameEncode(f, meta, args, c.w, c.Encoder)
-	if err != nil {
-		c.MarkFailed()
-	} else {
-		c.MarkSuccess()
-	}
-	return err
+func (c *Client) sendFrame(ctx context.Context, f Frame, args any) error {
+	return FrameEncode(f, GetMeta(ctx), args, c.w, c.Encoder)
 }
 
 type rpcResponse struct {
@@ -89,7 +84,7 @@ func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply any
 	rc.reply = reply
 	c.callMap.Store(id, rc)
 	defer c.callMap.Delete(id)
-	err = c.sendFrame(ctx, utils.StatusRequest16, id, serviceMethod, args)
+	err = c.warpSendFrame(ctx, NewFrame(utils.StatusRequest16, id, serviceMethod), args)
 	if err != nil {
 		return err
 	}
@@ -156,13 +151,13 @@ func (c *Client) CloseStream(s *Stream) {
 // Subscribe 订阅主题
 func (c *Client) Subscribe(topic string, handler func([]byte) error) error {
 	c.callMap.Store(utils.Hash64FNV1A(topic), handler)
-	return c.sendFrame(context.TODO(), utils.StatusSubscribe16, c.id, topic, nil)
+	return c.warpSendFrame(context.TODO(), NewFrame(utils.StatusSubscribe16, c.id, topic), nil)
 }
 
 // Unsubscribe 退订主题
 func (c *Client) Unsubscribe(topic string) error {
 	c.callMap.Delete(utils.Hash64FNV1A(topic))
-	return c.sendFrame(context.TODO(), utils.StatusUnsubscribe16, c.id, topic, nil)
+	return c.warpSendFrame(context.TODO(), NewFrame(utils.StatusUnsubscribe16, c.id, topic), nil)
 }
 
 func (c *Client) clientHandler(recv []byte, w io.Writer) error {
